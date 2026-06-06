@@ -1,0 +1,28 @@
+[gd_scene format=3 uid="uid://baqf882ulb8l5"]
+
+[sub_resource type="GDScript" id="GDScript_bthea"]
+script/source = "extends BaseWorld
+
+func _ready() -> void:
+	# 1. UI
+	build_advanced_hud()
+	build_boss_hp_bar_ui()
+	build_quest_and_inventory_ui()
+	
+	# 2. Игрок и Босс
+	build_player()
+	spawn_enemy(Vector2(1600, 700), \"res://assets/kikimora.png\", Color.GREEN, \"boss\")
+	
+	# 3. Победный портал
+	spawn_portal(Vector2(3000, 700), \"res://scenes/Victory.tscn\")
+	
+	# 4. Обновление
+	current_location_name = \"Древнее Капище\"
+	update_quest_journal()
+	
+	await get_tree().create_timer(1.0).timeout
+	trigger_dialogue(\"kikimora_start\", \"Кикимора: Кто посмел осквернить Капище?\", \"[1] Мир | [2] Бой\")
+"
+
+[node name="AncientShrine" type="Node2D" unique_id=536839785]
+script = SubResource("GDScript_bthea")

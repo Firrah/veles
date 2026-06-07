@@ -162,11 +162,8 @@ func load_location(location_name: String) -> void:
 
 func _process(delta: float) -> void:
 	if get_tree().paused or is_dialogue_active: return
-	
 	if current_hp <= 0:
-	# Блокируем управление, чтобы игрок не бегал во время затемнения
 		set_process(false)
-	# Используем TransitionManager для красивого ухода
 		TransitionManager.fade_to_scene("res://scenes/GameOver.tscn")
 		return
 		
@@ -177,67 +174,63 @@ func _process(delta: float) -> void:
 		if roll_timer <= 0: is_rolling = false; player_sprite.modulate = Color(1, 1, 1)
 	else:
 		player.velocity = input_dir * player_speed
-		if input_dir != Vector2.ZERO and input_dir.x != 0:
-			player_sprite.flip_h = (input_dir.x < 0)
+		if input_dir != Vector2.ZERO and input_dir.x != 0: player_sprite.flip_h = (input_dir.x < 0)
 	player.move_and_slide()
+	player.position.x = clamp(player.position.x, 0, map_width); player.position.y = clamp(player.position.y, 0, map_height)
 	
-	player.position.x = clamp(player.position.x, 0, map_width)
-	player.position.y = clamp(player.position.y, 0, map_height)
-	
-	current_mp = min(current_mp + mp_regen_speed_yav * delta, Global.max_mp)
-	mp_bar.value = current_mp
-	update_minimap()
+	current_mp = min(current_mp + mp_regen_speed_yav * delta, Global.max_mp); mp_bar.value = current_mp; update_minimap()
 	
 	var dead_projectiles = []
 	for proj in active_projectiles:
 		if is_instance_valid(proj):
 			proj.position += proj.get_meta("dir") * proj.get_meta("speed") * delta
-			
 			for enemy in enemy_list:
 				if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
-					if proj.position.distance_to(enemy.position) < 70.0:
+					if proj.position.distance_to(enemy.position) < 50.0:
 						var ehp = enemy.get_meta("hp") - proj.get_meta("damage")
-						enemy.set_meta("hp", ehp)
-						dead_projectiles.append(proj)
-						
-						if enemy.get_meta("id_tag") == "boss" and boss_ui_layer.visible:
-							boss_hp_bar.value = ehp
-						
-						if ehp <= 0:
-							spawn_xp_effect(enemy.position)
-							enemy_list.erase(enemy); level_objects.erase(enemy); enemy.queue_free()
-							boss_ui_layer.visible = false
-							world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
-			
+						enemy.set_meta("hp", ehp); dead_projectiles.append(proj)
+						if enemy.get_meta("id_tag") == "boss" and boss_ui_layer.visible: boss_hp_bar.value = ehp
+						if ehp <= 0: kill_enemy(enemy)
 			if proj.get_meta("lifetime") - delta <= 0: dead_projectiles.append(proj)
 			else: proj.set_meta("lifetime", proj.get_meta("lifetime") - delta)
-			
-	for dp in dead_projectiles:
-		if active_projectiles.has(dp): active_projectiles.erase(dp)
-		if is_instance_valid(dp): dp.queue_free()
+	for dp in dead_projectiles: if is_instance_valid(dp): active_projectiles.erase(dp); dp.queue_free()
 	
 	for enemy in enemy_list:
 		if not is_instance_valid(enemy) or enemy.get_meta("status") == "friendly": continue
 		
 		var distance = enemy.position.distance_to(player.position)
 		var move_dir = (player.position - enemy.position).normalized()
-		
-		enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
-		enemy.move_and_slide()
-		
-		var espr = enemy.get_node_or_null("Sprite2D")
-		if espr and move_dir.x != 0: espr.flip_h = (move_dir.x < 0)
-			
 		var att_t = enemy.get_meta("attack_timer")
 		if att_t > 0: enemy.set_meta("attack_timer", att_t - delta)
 		
-		if distance < 110.0 and not is_rolling and enemy.get_meta("attack_timer") <= 0:
+		# Логика босса
+		if enemy.get_meta("id_tag") == "boss":
+			if distance > 150.0 and distance < 600.0:
+				# Если дистанция подходящая, босс останавливается и стреляет
+				enemy.velocity = Vector2.ZERO 
+				if att_t <= 0: 
+					spawn_boss_projectile(enemy.position, player.position)
+					enemy.set_meta("attack_timer", 2.0)
+			else:
+				# Если слишком близко или слишком далеко — преследует
+				enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
+				enemy.move_and_slide()
+		else:
+			# Обычные враги просто ходят
+			enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
+			enemy.move_and_slide()
+		
+		# Общий код для визуального разворота спрайта
+		var espr = enemy.get_node_or_null("Sprite2D")
+		if espr and move_dir.x != 0: espr.flip_h = (move_dir.x < 0)
+			
+		# Атака в ближнем бою
+		if distance < 110.0 and not is_rolling and att_t <= 0:
 			current_hp -= 25.0 * Global.enemy_damage_mod
 			enemy.set_meta("attack_timer", 1.4)
 			update_hp_display()
 			player_sprite.modulate = Color(1.0, 0.3, 0.3)
-			var t = create_tween()
-			t.tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
+			create_tween().tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
 
 func handle_dialogue_choice(index: int) -> void:
 	is_dialogue_active = false; dialogue_panel.visible = false
@@ -786,24 +779,18 @@ func create_melee_flash(_pos: Vector2) -> void: pass
 func spawn_xp_effect(_pos: Vector2) -> void: pass
 
 func _input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause_game"):
-		toggle_pause()
-		return
+	if event.is_action_pressed("pause_game"): toggle_pause(); return
 	if is_dialogue_active:
 		if event.is_action_pressed("choice1"): handle_dialogue_choice(1)
 		elif event.is_action_pressed("choice2"): handle_dialogue_choice(2)
 		elif event.is_action_pressed("choice3"): handle_dialogue_choice(3)
 		return
-	if event.is_action_pressed("switch_world"):
-		switch_world(!is_nav_world)
+	if event.is_action_pressed("switch_world"): switch_world(!is_nav_world)
 	if event.is_action_pressed("roll") and not is_rolling:
-		is_rolling = true
-		roll_timer = roll_duration
+		is_rolling = true; roll_timer = roll_duration
 		roll_direction = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
-		if roll_direction == Vector2.ZERO:
-			roll_direction = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
-		player_sprite.modulate = Color(0.5, 0.7, 1.0, 0.7)
-		return
+		if roll_direction == Vector2.ZERO: roll_direction = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
+		player_sprite.modulate = Color(0.5, 0.7, 1.0, 0.7); return
 		
 	if event.is_action_pressed("attack") and not is_rolling:
 		var att_dir = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
@@ -813,42 +800,21 @@ func _input(event: InputEvent) -> void:
 				if player.position.distance_to(enemy.position) < 140.0:
 					var ehp = enemy.get_meta("hp") - 40.0
 					enemy.set_meta("hp", ehp)
-					if enemy.get_meta("id_tag") == "boss" and boss_ui_layer.visible:
-						boss_hp_bar.value = ehp
-					if ehp <= 0:
-						spawn_xp_effect(enemy.position)
-						enemy_list.erase(enemy)
-						level_objects.erase(enemy)
-						enemy.queue_free()
-						boss_ui_layer.visible = false
-						world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
+					if enemy.get_meta("id_tag") == "boss" and boss_ui_layer.visible: boss_hp_bar.value = ehp
+					if ehp <= 0: kill_enemy(enemy)
 		return
 		
 	if event.is_action_pressed("cast_spell") and not is_rolling:
 		if current_mp >= mp_spell_cost:
-			current_mp -= mp_spell_cost
-			mp_bar.value = current_mp
-			
+			current_mp -= mp_spell_cost; mp_bar.value = current_mp
 			var mouse_pos = get_global_mouse_position()
 			var cast_dir = (mouse_pos - player.position).normalized()
-			
-			if cast_dir.x != 0:
-				player_sprite.flip_h = (cast_dir.x < 0)
-				
-			# СОЗДАНИЕ И ЗАПУСК МАГИЧЕСКОГО СНАРЯДА (ПОЛНЫЙ КОД)
+			if cast_dir.x != 0: player_sprite.flip_h = (cast_dir.x < 0)
 			var proj := Node2D.new()
 			proj.position = player.position + cast_dir * 45.0
-			proj.set_meta("dir", cast_dir)
-			proj.set_meta("speed", 550.0)
-			proj.set_meta("damage", 35.0)
-			proj.set_meta("lifetime", 1.8)
-			
-			var p_spr := Sprite2D.new()
-			p_spr.texture = load_texture_safe("res://assets/spell.png", Vector2(24, 24), Color(0.2, 0.7, 1.0))
-			proj.add_child(p_spr)
-			
-			add_child(proj)
-			active_projectiles.append(proj)
+			proj.set_meta("dir", cast_dir); proj.set_meta("speed", 550.0); proj.set_meta("damage", 35.0); proj.set_meta("lifetime", 1.8)
+			var p_spr := Sprite2D.new(); p_spr.texture = load_texture_safe("res://assets/spell.png", Vector2(24, 24), Color(0.2, 0.7, 1.0))
+			proj.add_child(p_spr); add_child(proj); active_projectiles.append(proj)
 			
 func apply_class_stats() -> void:
 	if Global.player_class == "Воин":
@@ -895,3 +861,46 @@ func update_location_data(new_location: String) -> void:
 	# 4. Обновляем интерфейс
 	update_world_label_ui()
 	update_quest_journal()
+func kill_enemy(enemy: CharacterBody2D) -> void:
+	spawn_xp_effect(enemy.position)
+	if enemy.get_meta("id_tag") == "boss":
+		boss_ui_layer.visible = false
+		world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
+	enemy_list.erase(enemy)
+	level_objects.erase(enemy)
+	enemy.queue_free()
+
+func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
+	var proj := Node2D.new()
+	# Смещаем спавн на 60 пикселей вперед, чтобы снаряд не задевал босса
+	var dir = (target_pos - start_pos).normalized()
+	proj.position = start_pos + dir * 60.0 
+	
+	proj.set_meta("dir", dir)
+	proj.set_meta("speed", 300.0)
+	proj.set_meta("damage", 15.0)
+	proj.set_meta("lifetime", 2.0)
+	
+	var spr := Sprite2D.new()
+	spr.texture = load_texture_safe("res://assets/spell.png", Vector2(20, 20), Color(0.2, 0.8, 0.2))
+	proj.add_child(spr)
+	
+	var area := Area2D.new()
+	var shape := CollisionShape2D.new()
+	shape.shape = CircleShape2D.new()
+	shape.shape.radius = 15.0
+	area.add_child(shape)
+	proj.add_child(area)
+	
+	# Важно: используем set_collision_mask_value, чтобы игнорировать босса (если он на 2-м слое)
+	# Или просто проверяем, является ли body игроком
+	area.body_entered.connect(func(body):
+		if body == player and not is_rolling:
+			current_hp -= 15.0
+			update_hp_display()
+			player_sprite.modulate = Color(1.0, 0.3, 0.3)
+			create_tween().tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
+			proj.queue_free()
+	)
+	add_child(proj)
+	active_projectiles.append(proj)

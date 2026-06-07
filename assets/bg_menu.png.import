@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://q1iirfbxboy7"
-path="res://.godot/imported/bg_grove.png-21f81593fc1d6b36c0546055b644038e.ctex"
+uid="uid://bncfthspx5y77"
+path="res://.godot/imported/bg_menu.png-745c86e2800aa7469f243d637ff3aff2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/bg_grove.png"
-dest_files=["res://.godot/imported/bg_grove.png-21f81593fc1d6b36c0546055b644038e.ctex"]
+source_file="res://assets/bg_menu.png"
+dest_files=["res://.godot/imported/bg_menu.png-745c86e2800aa7469f243d637ff3aff2.ctex"]
 
 [params]
 

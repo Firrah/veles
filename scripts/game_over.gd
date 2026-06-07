@@ -2,6 +2,13 @@
 extends Node2D
 
 func _ready() -> void:
+	var bg = TextureRect.new()
+	bg.texture = load("res://assets/bg_gameover.png")
+	bg.custom_minimum_size = Vector2(1920, 1080)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	add_child(bg)
+	
 	var panel = Panel.new()
 	panel.size = Vector2(1000, 500)
 	panel.position = Vector2(460, 290)

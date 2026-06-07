@@ -42,22 +42,17 @@ func build_main_menu_ui() -> void:
 	main_menu_canvas.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(main_menu_canvas)
 	
-	# ИСПРАВЛЕННЫЙ ЗАДНИЙ ФОН: Создаем базовую 2D текстуру градиента
-	var bg_texture = GradientTexture2D.new()
-	bg_texture.gradient = Gradient.new()
-	bg_texture.gradient.set_color(0, Color(0.12, 0.09, 0.09)) # Светлый центр (костер)
-	bg_texture.gradient.set_color(1, Color(0.03, 0.02, 0.02)) # Темные края (ночной лес)
-	
-	# Переключаем текстуру в радиальный режим (от центра к краям)
-	bg_texture.fill = GradientTexture2D.FILL_RADIAL
-	# Центрируем градиент на экране 1920x1080
-	bg_texture.fill_from = Vector2(0.5, 0.5)
-	bg_texture.fill_to = Vector2(1.0, 1.0)
-	
+# ЗАМЕНА ГРАДИЕНТА НА КАРТИНКУ
 	var bg = TextureRect.new()
 	bg.size = Vector2(1920, 1080)
-	bg.texture = bg_texture
+	
+	# Загружаем текстуру из файла
+	bg.texture = load("res://assets/bg_menu.png")
+	
+	# Растягиваем текстуру на весь экран
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	
 	main_menu_canvas.add_child(bg)
 	
 	# ЦЕНТРАЛЬНЫЙ ТЕРЕМ (ПАНЕЛЬ МЕНЮ)

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://4htogeu1bi1q"
-path="res://.godot/imported/grove_guard.png-6be15d15f227d31c3c2bbbe7557c10cf.ctex"
+uid="uid://byeid3rkukbm0"
+path="res://.godot/imported/player_sheet.png-641acc92a6c5fb700393e6fabd3443f6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/grove_guard.png"
-dest_files=["res://.godot/imported/grove_guard.png-6be15d15f227d31c3c2bbbe7557c10cf.ctex"]
+source_file="res://assets/player_sheet.png"
+dest_files=["res://.godot/imported/player_sheet.png-641acc92a6c5fb700393e6fabd3443f6.ctex"]
 
 [params]
 
@@ -21,11 +21,11 @@ compress/lossy_quality=0.7
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
-compress/normal_map=0
+compress/normal_map=2
 compress/channel_pack=0
 mipmaps/generate=false
 mipmaps/limit=-1
-roughness/mode=0
+roughness/mode=1
 roughness/src_normal=""
 process/channel_remap/red=0
 process/channel_remap/green=1

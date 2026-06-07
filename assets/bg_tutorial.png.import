@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dsrv4ebtni6cx"
-path="res://.godot/imported/chernobog_shadow.png-dcc4a786cea865f0e77afa1912a50b82.ctex"
+uid="uid://kw256kdlsqn2"
+path="res://.godot/imported/bg_tutorial.png-c6906328dec25f880630cc68a94441ef.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/chernobog_shadow.png"
-dest_files=["res://.godot/imported/chernobog_shadow.png-dcc4a786cea865f0e77afa1912a50b82.ctex"]
+source_file="res://assets/bg_tutorial.png"
+dest_files=["res://.godot/imported/bg_tutorial.png-c6906328dec25f880630cc68a94441ef.ctex"]
 
 [params]
 

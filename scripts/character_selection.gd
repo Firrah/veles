@@ -7,10 +7,17 @@ func _ready() -> void:
 	animate_panel_entrance()
 
 func build_ui() -> void:
-	# 1. Фон
-	var bg = ColorRect.new()
+# ЗАМЕНА ГРАДИЕНТА НА КАРТИНКУ
+	var bg = TextureRect.new()
 	bg.size = Vector2(1920, 1080)
-	bg.color = Color(0.03, 0.02, 0.02)
+	
+	# Загружаем текстуру из файла
+	bg.texture = load("res://assets/bg_menu.png")
+	
+	# Растягиваем текстуру на весь экран
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	
 	add_child(bg)
 	
 	# 2. Панель

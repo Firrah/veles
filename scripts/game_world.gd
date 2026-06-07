@@ -10,12 +10,13 @@ var quest_objectives = {
 	"defeat_kikimora": false
 }
 var status_panel: Panel
+var stamina_regen_speed := 15.0 # Скорость восстановления в секунду
 var current_combat_mode = CombatMode.COMBAT
 var chosen_path_name: String = "Выбор не сделан"
 var hp_bar: ProgressBar # Добавь это, если нет
 var stamina_bar: ProgressBar
 var map_width: float = 3200.0
-var map_height: float = 2000.0
+var map_height: float = 1500.0
 var mp_spell_cost: float = 20.0
 var mp_regen_speed_yav: float = 20.0
 var inventory = {"crystal": 0}
@@ -26,7 +27,6 @@ var current_dialogue_id: String = ""
 var tutorial_steps_done = {"move": false, "roll": false, "nav": false}
 
 var player: CharacterBody2D
-var player_sprite: Sprite2D
 var background: TextureRect
 var canvas_modulate: CanvasModulate
 var camera: Camera2D
@@ -118,23 +118,54 @@ func load_texture_safe(path: String, fallback_size: Vector2, fallback_color: Col
 	var img := Image.create(int(fallback_size.x), int(fallback_size.y), false, Image.FORMAT_RGBA8)
 	img.fill(fallback_color)
 	return ImageTexture.create_from_image(img)
+	
+var player_anim: AnimatedSprite2D # Заменили player_sprite
 
 func build_player() -> void:
+	# 1. Создаем игрока
 	player = CharacterBody2D.new()
 	player.position = Vector2(300, 300)
 	
-	player_sprite = Sprite2D.new()
-	player_sprite.texture = load_texture_safe("res://assets/player.png", Vector2(64, 96), Color(0.3, 0.5, 0.8))
-	player_sprite.scale = Vector2(1.5, 1.5)
-	player.add_child(player_sprite)
+	# 2. Создаем и настраиваем AnimatedSprite2D
+	player_anim = AnimatedSprite2D.new()
 	
-	var shape := CollisionShape2D.new(); shape.shape = RectangleShape2D.new(); shape.shape.size = Vector2(70, 110)
+	# Пытаемся загрузить файл, но если его нет — выводим ошибку, а не просто молчим
+	var frames_path = "res://assets/wizard_frames.tres"
+	if ResourceLoader.exists(frames_path):
+		player_anim.sprite_frames = load(frames_path)
+		print("Успешно загружен файл анимаций: ", frames_path)
+	else:
+		push_error("ФАЙЛ АНИМАЦИЙ НЕ НАЙДЕН: " + frames_path)
+		# Если файла нет, используем дефолтный, чтобы игра хотя бы запустилась
+		player_anim.sprite_frames = SpriteFrames.new()
+	
+	# Устанавливаем настройки спрайта
+	player_anim.animation = "idle"
+	player_anim.scale = Vector2(1.5, 1.5)
+	player_anim.z_index = 10 # Убедимся, что спрайт выше фона
+	
+	# 3. Добавляем спрайт в дерево ПЕРЕД запуском анимации
+	player.add_child(player_anim)
+	
+	# 4. Запускаем анимацию только после добавления в дерево
+	if player_anim.sprite_frames.has_animation("idle"):
+		player_anim.play("idle")
+	
+	# 5. Коллизия и Камера
+	var shape := CollisionShape2D.new()
+	shape.shape = RectangleShape2D.new()
+	shape.shape.size = Vector2(40, 80)
 	player.add_child(shape)
 	
 	camera = Camera2D.new()
-	camera.position_smoothing_enabled = true; camera.position_smoothing_speed = 6.0
-	camera.limit_left = 0; camera.limit_top = 0; camera.limit_right = int(map_width); camera.limit_bottom = int(map_height)
+	camera.position_smoothing_enabled = true
+	camera.limit_left = 0
+	camera.limit_top = 0
+	camera.limit_right = int(map_width)
+	camera.limit_bottom = int(map_height)
 	player.add_child(camera)
+	
+	# 6. Добавляем игрока на сцену
 	add_child(player)
 
 func load_location(location_name: String) -> void:
@@ -167,6 +198,7 @@ func load_location(location_name: String) -> void:
 
 func _process(delta: float) -> void:
 	update_all_ui()
+	
 	if get_tree().paused or is_dialogue_active: return
 	if Global.current_hp <= 0:
 		set_process(false)
@@ -174,70 +206,126 @@ func _process(delta: float) -> void:
 		return
 		
 	var input_dir = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
+	
+	# Анимации и движение
 	if is_rolling:
-		roll_timer -= delta
+		# ПЕРЕПИСАННЫЙ БЛОК:
+		# Мы играем анимацию только если она еще не играет, 
+		# чтобы не перезапускать её каждый кадр
+		if player_anim.animation != "roll":
+			player_anim.play("roll")
+			
 		player.velocity = roll_direction * roll_speed
-		if roll_timer <= 0: is_rolling = false; player_sprite.modulate = Color(1, 1, 1)
+		roll_timer -= delta
+		
+		if roll_timer <= 0: 
+			is_rolling = false
+			player_anim.modulate = Color(1, 1, 1)
 	else:
-		player.velocity = input_dir * player_speed
-		if input_dir != Vector2.ZERO and input_dir.x != 0: player_sprite.flip_h = (input_dir.x < 0)
+		if input_dir != Vector2.ZERO:
+			player.velocity = input_dir * player_speed
+			player_anim.flip_h = (input_dir.x < 0)
+			if player_anim.sprite_frames.has_animation("walk"): player_anim.play("walk")
+			else: player_anim.play("idle")
+		else:
+			player.velocity = Vector2.ZERO
+			player_anim.play("idle")
+	
 	player.move_and_slide()
-	player.position.x = clamp(player.position.x, 0, map_width); player.position.y = clamp(player.position.y, 0, map_height)
+	player.position = player.position.clamp(Vector2.ZERO, Vector2(map_width, map_height))
+	# Ограничение области передвижения
+	player.position.x = clamp(player.position.x, 0, map_width)
+	player.position.y = clamp(player.position.y, 0, map_height)
 	
-	Global.current_stamina = min(Global.current_stamina + Global.stamina_regen_speed * delta, Global.max_stamina)
-	Global.current_mp = min(Global.current_mp + mp_regen_speed_yav * delta, Global.max_mp); mp_bar.value = Global.current_mp; update_minimap()
+	# 3. Регенерация и UI
+	Global.current_mp = min(Global.current_mp + mp_regen_speed_yav * delta, Global.max_mp)
+	Global.current_stamina = min(Global.current_stamina + stamina_regen_speed * delta, Global.max_stamina)
+	mp_bar.value = Global.current_mp
+	stamina_bar.value = Global.current_stamina
+	update_minimap()
 	
+# 4. Атака магией и движение снарядов
 	var dead_projectiles = []
+	
 	for proj in active_projectiles:
 		if is_instance_valid(proj):
+			# ДВИЖЕНИЕ
 			proj.position += proj.get_meta("dir") * proj.get_meta("speed") * delta
+			
+			# ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА УРОНА (чтобы не пролетали сквозь врагов)
 			for enemy in enemy_list:
 				if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
-					if proj.position.distance_to(enemy.position) < 50.0:
-						var ehp = enemy.get_meta("hp") - proj.get_meta("damage")
-						enemy.set_meta("hp", ehp); dead_projectiles.append(proj)
-						if enemy.get_meta("id_tag") == "boss" and boss_ui_layer.visible: boss_hp_bar.value = ehp
-						if ehp <= 0: kill_enemy(enemy)
-			if proj.get_meta("lifetime") - delta <= 0: dead_projectiles.append(proj)
-			else: proj.set_meta("lifetime", proj.get_meta("lifetime") - delta)
-	for dp in dead_projectiles: if is_instance_valid(dp): active_projectiles.erase(dp); dp.queue_free()
+					# Если расстояние меньше 30 пикселей - считаем попаданием
+					if proj.position.distance_to(enemy.position) < 30.0:
+						_on_projectile_hit(enemy)
+						dead_projectiles.append(proj)
+						break # Выходим из цикла врагов, так как снаряд уже попал
+			
+			# Удаление, если снаряд улетел слишком далеко (время жизни)
+			var life = proj.get_meta("lifetime") - delta
+			if life <= 0:
+				dead_projectiles.append(proj)
+			else:
+				proj.set_meta("lifetime", life)
+				
+	# Очистка удаленных снарядов
+	for dp in dead_projectiles:
+		if is_instance_valid(dp):
+			active_projectiles.erase(dp)
+			dp.queue_free()
+
+	# ВЫСТРЕЛ
+	if Input.is_action_just_pressed("cast_spell") and not is_rolling:
+		if Global.current_mp >= mp_spell_cost:
+			Global.current_mp -= mp_spell_cost
+			var mouse_pos = get_global_mouse_position()
+			var shoot_dir = (mouse_pos - player.position).normalized()
+			if shoot_dir.x != 0: player_anim.flip_h = (shoot_dir.x < 0)
+			spawn_projectile(player.position, shoot_dir)
 	
+	# 5. Обработка врагов
 	for enemy in enemy_list:
 		if not is_instance_valid(enemy) or enemy.get_meta("status") == "friendly": continue
 		
+		var espr = enemy.get_node_or_null("AnimatedSprite2D") # Убедись, что имя совпадает!
 		var distance = enemy.position.distance_to(player.position)
 		var move_dir = (player.position - enemy.position).normalized()
 		var att_t = enemy.get_meta("attack_timer")
-		if att_t > 0: enemy.set_meta("attack_timer", att_t - delta)
 		
-		# Логика босса
-		if enemy.get_meta("id_tag") == "boss":
-			if distance > 150.0 and distance < 600.0:
-				# Если дистанция подходящая, босс останавливается и стреляет
-				enemy.velocity = Vector2.ZERO 
-				if att_t <= 0: 
-					spawn_boss_projectile(enemy.position, player.position)
-					enemy.set_meta("attack_timer", 2.0)
+		# ЛОГИКА АНИМАЦИИ
+		if espr:
+			# Анимация атаки (если таймер атаки почти закончился или активен)
+			if distance < 150.0 and att_t > 0.5:
+				if espr.sprite_frames.has_animation("attack"): espr.play("attack")
+			# Анимация ходьбы
+			elif enemy.velocity != Vector2.ZERO:
+				if espr.sprite_frames.has_animation("walk"): espr.play("walk")
+			# Анимация бездействия
 			else:
-				# Если слишком близко или слишком далеко — преследует
-				enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
-				enemy.move_and_slide()
+				if espr.sprite_frames.has_animation("idle"): espr.play("idle")
+		
+		# Остальная логика движения (твоя)
+		if enemy.get_meta("id_tag") == "boss" and distance > 150.0 and distance < 600.0:
+			enemy.velocity = Vector2.ZERO 
+			if att_t <= 0: 
+				spawn_boss_projectile(enemy.position, player.position)
+				enemy.set_meta("attack_timer", 2.0)
 		else:
-			# Обычные враги просто ходят
 			enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
 			enemy.move_and_slide()
 		
-		# Общий код для визуального разворота спрайта
-		var espr = enemy.get_node_or_null("Sprite2D")
+		# Поворот спрайта
 		if espr and move_dir.x != 0: espr.flip_h = (move_dir.x < 0)
 			
-		# Атака в ближнем бою
+		# Получение урона
 		if distance < 110.0 and not is_rolling and att_t <= 0:
 			Global.current_hp -= 25.0 * Global.enemy_damage_mod
 			enemy.set_meta("attack_timer", 1.4)
 			update_hp_display()
-			player_sprite.modulate = Color(1.0, 0.3, 0.3)
-			create_tween().tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
+			if is_instance_valid(player_anim):
+				player_anim.modulate = Color(1.0, 0.3, 0.3)
+				var tween = create_tween()
+				tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
 
 func handle_dialogue_choice(index: int) -> void:
 	is_dialogue_active = false; dialogue_panel.visible = false
@@ -863,28 +951,28 @@ func _input(event: InputEvent) -> void:
 		elif event.is_action_pressed("choice2"): handle_dialogue_choice(2)
 		elif event.is_action_pressed("choice3"): handle_dialogue_choice(3)
 		return
+		
 	if event.is_action_pressed("switch_world"): switch_world(!is_nav_world)
-	# Исправленный перекат
+	
+	# Перекат
 	if event.is_action_pressed("roll") and not is_rolling:
-		if Global.current_stamina >= 25.0: # Сначала проверяем стамину
+		if Global.current_stamina >= 25.0:
 			Global.current_stamina -= 25.0
-			update_all_ui() # Обновляем полоску сразу
-			
 			is_rolling = true
-			roll_timer = roll_duration
+			var anim_fps = player_anim.sprite_frames.get_animation_speed("roll")
+			var frame_count = player_anim.sprite_frames.get_frame_count("roll")
+			roll_timer = float(frame_count) / anim_fps
 			roll_direction = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
 			if roll_direction == Vector2.ZERO: 
-				roll_direction = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
-			
-			# Визуальный эффект только при успешном перекате
-			player_sprite.modulate = Color(0.5, 0.7, 1.0, 0.7)
+				roll_direction = Vector2.LEFT if player_anim.flip_h else Vector2.RIGHT
+			player_anim.modulate = Color(0.5, 0.7, 1.0, 0.7)
 		else:
 			# Можно добавить звук "нет стамины" или просто проигнорировать
 			print("Недостаточно силы для переката!")
 		return
 		
 	if event.is_action_pressed("attack") and not is_rolling:
-		var att_dir = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
+		var att_dir = Vector2.LEFT if player_anim.flip_h else Vector2.RIGHT
 		create_melee_flash(player.position + att_dir * 60.0)
 		for enemy in enemy_list:
 			if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
@@ -895,17 +983,6 @@ func _input(event: InputEvent) -> void:
 					if ehp <= 0: kill_enemy(enemy)
 		return
 		
-	if event.is_action_pressed("cast_spell") and not is_rolling:
-		if Global.current_mp >= mp_spell_cost:
-			Global.current_mp -= mp_spell_cost; mp_bar.value = Global.current_mp
-			var mouse_pos = get_global_mouse_position()
-			var cast_dir = (mouse_pos - player.position).normalized()
-			if cast_dir.x != 0: player_sprite.flip_h = (cast_dir.x < 0)
-			var proj := Node2D.new()
-			proj.position = player.position + cast_dir * 45.0
-			proj.set_meta("dir", cast_dir); proj.set_meta("speed", 550.0); proj.set_meta("damage", 35.0); proj.set_meta("lifetime", 1.8)
-			var p_spr := Sprite2D.new(); p_spr.texture = load_texture_safe("res://assets/spell.png", Vector2(24, 24), Color(0.2, 0.7, 1.0))
-			proj.add_child(p_spr); add_child(proj); active_projectiles.append(proj)
 			
 func apply_class_stats() -> void:
 	if Global.player_class == "Воин":
@@ -1006,8 +1083,8 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 		if body == player and not is_rolling:
 			Global.current_hp -= 15.0
 			update_hp_display()
-			player_sprite.modulate = Color(1.0, 0.3, 0.3)
-			create_tween().tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
+			player_anim.modulate = Color(1.0, 0.3, 0.3)
+			create_tween().tween_property(player_anim, "modulate", Color(1,1,1), 0.2)
 			proj.queue_free()
 	)
 	add_child(proj)
@@ -1035,3 +1112,70 @@ func update_all_ui() -> void:
 			Global.player_xp, 
 			Global.xp_to_next_level
 		]
+		
+func _on_projectile_hit(enemy: Node2D) -> void:
+	# Проверяем, существует ли враг и активен ли он
+	if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
+		var damage = 35.0 
+		var enemy_hp = enemy.get_meta("hp") - damage
+		enemy.set_meta("hp", enemy_hp)
+		
+		# Визуальный эффект
+		print("Попадание по врагу! HP: ", enemy_hp)
+		
+		# Обновление UI босса
+		if enemy.get_meta("id_tag") == "boss":
+			boss_hp_bar.value = enemy_hp
+			
+		# Проверка смерти
+		if enemy_hp <= 0:
+			kill_enemy(enemy)
+
+func spawn_projectile(start_pos: Vector2, dir: Vector2) -> void:
+	var proj = Area2D.new()
+	proj.position = start_pos + (dir * 45.0)
+	
+	# 1. Принудительно задаем коллизии
+	proj.collision_layer = 0  # Снаряд не должен сталкиваться с другими снарядами
+	proj.collision_mask = 2   # Снаряд ищет врагов на 2-м слое (проверь, на каком слое Кикимора!)
+	
+	# 2. Создаем коллизию
+	var col = CollisionShape2D.new()
+	col.shape = CircleShape2D.new()
+	col.shape.radius = 15.0
+	proj.add_child(col)
+	
+	# 3. Подключаем сигнал
+	proj.body_entered.connect(_on_projectile_hit)
+	
+	add_child(proj)
+	active_projectiles.append(proj)
+	
+	# Создаем спрайт снаряда
+	var spr = Sprite2D.new()
+	# Используем стандартный load, если load_texture_safe не определена в твоем скрипте
+	if ResourceLoader.exists("res://assets/spell.png"):
+		spr.texture = load("res://assets/spell.png")
+	else:
+		# Если картинки нет, создаем простой желтый квадратик
+		var img = Image.create(16, 16, false, Image.FORMAT_RGBA8)
+		img.fill(Color.YELLOW)
+		spr.texture = ImageTexture.create_from_image(img)
+	proj.add_child(spr)
+	
+	# Коллизия снаряда
+	var p_col = CollisionShape2D.new()
+	p_col.shape = CircleShape2D.new()
+	p_col.shape.radius = 10.0
+	proj.add_child(p_col)
+	
+	# Установка параметров
+	proj.set_meta("dir", dir)
+	proj.set_meta("speed", 600.0)
+	proj.set_meta("damage", 30.0)
+	proj.set_meta("lifetime", 2.0)
+	
+	proj.body_entered.connect(_on_projectile_hit)
+	
+	add_child(proj)
+	active_projectiles.append(proj)

@@ -2,9 +2,11 @@
 extends Node2D
 
 func _ready() -> void:
-	var bg = ColorRect.new()
-	bg.size = Vector2(1920, 1080)
-	bg.color = Color(0.02, 0.15, 0.04, 0.95) # Изумрудный фон
+	var bg = TextureRect.new()
+	bg.texture = load("res://assets/bg_victory.png")
+	bg.custom_minimum_size = Vector2(1920, 1080)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	add_child(bg)
 	
 	var panel = Panel.new()
@@ -46,3 +48,13 @@ func _apply_font(node: Control, size: int, color: Color) -> void:
 		node.add_theme_font_override("font", font_res)
 	node.add_theme_font_size_override("font_size", size)
 	node.add_theme_color_override("font_color", color)
+
+func load_texture_safe(path: String, fallback_size: Vector2, fallback_color: Color) -> Texture2D:
+	if ResourceLoader.exists(path):
+		var tex = load(path)
+		if tex is Texture2D:
+			return tex
+	
+	var img := Image.create(int(fallback_size.x), int(fallback_size.y), false, Image.FORMAT_RGBA8)
+	img.fill(fallback_color)
+	return ImageTexture.create_from_image(img)

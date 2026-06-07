@@ -2,11 +2,6 @@
 extends Node2D
 
 func _ready() -> void:
-	var bg = ColorRect.new()
-	bg.size = Vector2(1920, 1080)
-	bg.color = Color(0.1, 0.01, 0.01, 0.95)
-	add_child(bg)
-	
 	var panel = Panel.new()
 	panel.size = Vector2(1000, 500)
 	panel.position = Vector2(460, 290)

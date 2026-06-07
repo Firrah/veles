@@ -18,6 +18,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 Global="*uid://bfdiapjuyg105"
+TransitionManager="*uid://b7cpflxiep4xj"
 
 [display]
 

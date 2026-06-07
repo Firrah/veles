@@ -34,7 +34,16 @@ func reset_game_data() -> void:
 	else:
 		enemy_damage_mod = 1.6
 		enemy_speed_mod = 1.3
-
+		
 func change_scene(scene_path: String) -> void:
-	# Используем call_deferred, чтобы смена сцены произошла после завершения физического шага
-	get_tree().call_deferred("change_scene_to_file", scene_path)
+	var current_scene = get_tree().current_scene
+	
+	var fade = ColorRect.new()
+	fade.color = Color(0, 0, 0, 0)
+	fade.size = Vector2(1920, 1080)
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	current_scene.add_child(fade)
+	
+	var tween = current_scene.create_tween()
+	tween.tween_property(fade, "color:a", 1.0, 0.5)
+	tween.tween_callback(func(): get_tree().change_scene_to_file(scene_path))

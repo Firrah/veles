@@ -164,7 +164,10 @@ func _process(delta: float) -> void:
 	if get_tree().paused or is_dialogue_active: return
 	
 	if current_hp <= 0:
-		Global.change_scene("res://scenes/GameOver.tscn")
+	# Блокируем управление, чтобы игрок не бегал во время затемнения
+		set_process(false)
+	# Используем TransitionManager для красивого ухода
+		TransitionManager.fade_to_scene("res://scenes/GameOver.tscn")
 		return
 		
 	var input_dir = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
@@ -314,25 +317,50 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	add_child(item); level_objects.append(item)
 
 func spawn_portal(pos: Vector2, target: String) -> void:
-	var portal := Area2D.new(); portal.position = pos
+	var portal := Area2D.new()
+	portal.position = pos
+	
 	var spr := Sprite2D.new()
 	spr.texture = load_texture_safe("res://assets/portal.png", Vector2(60, 140), Color.PURPLE)
 	spr.scale = Vector2(1.3, 1.3)
 	portal.add_child(spr)
-	var shape := CollisionShape2D.new(); shape.shape = RectangleShape2D.new(); shape.shape.size = Vector2(90, 180); portal.add_child(shape)
-	portal.body_entered.connect(func(body):
-		if body == player:
-			if current_location_name == "Окраина Чернолесья":
-				if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav: load_location(target)
-				else: world_label.text = "АКТИВИРУЙТЕ ВСЕ ТРИ КАМНЯ!"
-				return
-			if target == "ПОБЕДА":
-				if inventory["crystal"] >= 1:
-					Global.final_score = (inventory["crystal"] * 300) + (Global.player_level * 500)
-					Global.change_scene("res://scenes/Victory.tscn")
-				else: world_label.text = "ПОРТАЛ ЗАКРЫТ БЕЗ КРИСТАЛЛА!"
-	)
-	add_child(portal); level_objects.append(portal)
+	
+	var shape := CollisionShape2D.new()
+	shape.shape = RectangleShape2D.new()
+	shape.shape.size = Vector2(90, 180)
+	portal.add_child(shape)
+	
+	# Подключаем функцию обработки входа
+	portal.body_entered.connect(_on_portal_body_entered.bind(portal, target))
+	
+	add_child(portal)
+	level_objects.append(portal)
+
+func _on_portal_body_entered(body: Node2D, portal: Area2D, target: String) -> void:
+	if body != player: return
+	
+	# Блокируем портал, чтобы избежать двойного вызова
+	portal.set_deferred("monitoring", false)
+	
+	# --- Логика Обучения ---
+	if current_location_name == "Окраина Чернолесья":
+		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
+			# Вызываем глобальный переход через TransitionManager
+			TransitionManager.fade_to_scene(target)
+		else:
+			# Если рано, возвращаем мониторинг, чтобы игрок мог попробовать снова
+			portal.set_deferred("monitoring", true)
+			world_label.text = "АКТИВИРУЙТЕ ВСЕ ТРИ КАМНЯ!"
+		return
+
+	# --- Логика Победы ---
+	if target == "ПОБЕДА":
+		if inventory["crystal"] >= 1:
+			Global.final_score = (inventory["crystal"] * 300) + (Global.player_level * 500)
+			TransitionManager.fade_to_scene("res://scenes/Victory.tscn")
+		else:
+			portal.set_deferred("monitoring", true)
+			world_label.text = "ПОРТАЛ ЗАКРЫТ БЕЗ КРИСТАЛЛА!"
 
 func change_path(new_name: String) -> void:
 	chosen_path_name = new_name
@@ -836,3 +864,34 @@ func apply_class_stats() -> void:
 		# Стандартные значения, если класс не выбран
 		Global.max_hp = 100
 		Global.max_mp = 100
+func update_location_data(new_location: String) -> void:
+	current_location_name = new_location
+	print("Локация обновлена на: ", new_location)
+	
+	# 1. Удаляем все объекты старой локации (врагов и порталы)
+	for obj in level_objects:
+		if is_instance_valid(obj):
+			obj.queue_free()
+	level_objects.clear()
+	enemy_list.clear()
+	active_projectiles.clear()
+	
+	# 2. Меняем фон
+	if new_location == "Древнее Капище":
+		background.texture = load_texture_safe("res://assets/bg_shrine.png", Vector2(1920, 1080), Color(0.15, 0.1, 0.15))
+		# Спавним содержимое Капища
+		spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
+		spawn_item(Vector2(1750, 750), "crystal")
+		spawn_portal(Vector2(3000, 700), "ПОБЕДА")
+		trigger_dialogue("kikimora_start", "Кикимора: Кто посмел осквернить Древнее Капище?", "[1] Мир | [2] Бой")
+	
+	elif new_location == "Окраина Чернолесья":
+		background.texture = load_texture_safe("res://assets/bg_tutorial.png", Vector2(1920, 1080), Color(0.12, 0.14, 0.12))
+		# ... тут спавн триггеров обучения, если нужно
+		
+	# 3. Перемещаем игрока на стартовую позицию
+	player.position = Vector2(250, 500)
+	
+	# 4. Обновляем интерфейс
+	update_world_label_ui()
+	update_quest_journal()

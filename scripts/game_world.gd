@@ -2,13 +2,20 @@
 extends Node2D
 
 enum CombatMode { COMBAT, PEACE }
+var quest_objectives = {
+	"move": false,
+	"roll": false,
+	"nav": false,
+	"find_crystal": false,
+	"defeat_kikimora": false
+}
+var status_panel: Panel
 var current_combat_mode = CombatMode.COMBAT
 var chosen_path_name: String = "Выбор не сделан"
 var hp_bar: ProgressBar # Добавь это, если нет
+var stamina_bar: ProgressBar
 var map_width: float = 3200.0
 var map_height: float = 2000.0
-var current_hp: float = 100.0
-var current_mp: float = 100.0
 var mp_spell_cost: float = 20.0
 var mp_regen_speed_yav: float = 20.0
 var inventory = {"crystal": 0}
@@ -53,8 +60,6 @@ var level_objects = []
 
 func _ready() -> void:
 	apply_class_stats()
-	current_hp = Global.max_hp
-	current_mp = Global.max_mp
 	setup_input_map()
 	
 	background = TextureRect.new()
@@ -161,8 +166,9 @@ func load_location(location_name: String) -> void:
 	update_world_label_ui(); update_quest_journal(); switch_world(false)
 
 func _process(delta: float) -> void:
+	update_all_ui()
 	if get_tree().paused or is_dialogue_active: return
-	if current_hp <= 0:
+	if Global.current_hp <= 0:
 		set_process(false)
 		TransitionManager.fade_to_scene("res://scenes/GameOver.tscn")
 		return
@@ -178,7 +184,8 @@ func _process(delta: float) -> void:
 	player.move_and_slide()
 	player.position.x = clamp(player.position.x, 0, map_width); player.position.y = clamp(player.position.y, 0, map_height)
 	
-	current_mp = min(current_mp + mp_regen_speed_yav * delta, Global.max_mp); mp_bar.value = current_mp; update_minimap()
+	Global.current_stamina = min(Global.current_stamina + Global.stamina_regen_speed * delta, Global.max_stamina)
+	Global.current_mp = min(Global.current_mp + mp_regen_speed_yav * delta, Global.max_mp); mp_bar.value = Global.current_mp; update_minimap()
 	
 	var dead_projectiles = []
 	for proj in active_projectiles:
@@ -226,7 +233,7 @@ func _process(delta: float) -> void:
 			
 		# Атака в ближнем бою
 		if distance < 110.0 and not is_rolling and att_t <= 0:
-			current_hp -= 25.0 * Global.enemy_damage_mod
+			Global.current_hp -= 25.0 * Global.enemy_damage_mod
 			enemy.set_meta("attack_timer", 1.4)
 			update_hp_display()
 			player_sprite.modulate = Color(1.0, 0.3, 0.3)
@@ -240,6 +247,7 @@ func handle_dialogue_choice(index: int) -> void:
 		if index == 1:
 			change_path("Путь Стали и Магии")
 			current_combat_mode = CombatMode.PEACE
+			update_quest_journal()
 			trigger_dialogue("kikimora_peace", "Кикимора: Твоё почтение спасло тебе жизнь. Забирай Кристалл Яви.", "[1] Взять кристалл")
 			for e in enemy_list: if is_instance_valid(e): e.set_meta("status", "friendly")
 			update_world_label_ui() # <--- ДОБАВЬ ЭТО СЮДА
@@ -274,6 +282,7 @@ func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 			trigger_dialogue("tutorial_" + step_id, formatted_msg, "[1] Осознать")
 			
 			tutorial_steps_done[step_id] = true
+			quest_objectives[step_id] = true # Ставим галочку в новой системе
 			update_quest_journal()
 	)
 	add_child(area)
@@ -301,11 +310,21 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	spr.texture = load_texture_safe("res://assets/crystal.png", Vector2(32, 32), Color.CYAN)
 	item.add_child(spr)
 	var shape := CollisionShape2D.new(); shape.shape = CircleShape2D.new(); shape.shape.radius = 50.0; item.add_child(shape)
+	
 	item.body_entered.connect(func(body):
 		if body == player:
+			# --- ПРОВЕРКА СОСТОЯНИЯ БОЯ ---
+			if current_combat_mode == CombatMode.COMBAT:
+				# Если бой идет, кристалл не берется
+				world_label.text = "ВРАГ НЕ ПОБЕЖДЁН!"
+				return
+			
+			# Если мы в режиме PEACE, забираем предмет
 			inventory["crystal"] += 1; add_xp(60)
+			quest_objectives["find_crystal"] = true # Ставим галочку
 			level_objects.erase(item); item.queue_free()
 			update_inventory_ui(); update_quest_journal()
+			world_label.text = "Ты овладел Кристаллом Яви."
 	)
 	add_child(item); level_objects.append(item)
 
@@ -369,19 +388,24 @@ func update_world_label_ui() -> void: world_label.text = "МЕСТО: %s\nПУТ
 func update_quest_journal() -> void:
 	if not is_instance_valid(quest_text): return
 	
+	quest_text.bbcode_enabled = true
 	var text_output = ""
-	if current_location_name == "Древнее Капище":
-		text_output = "--- ГЛАВА I: ДРЕВНЕЕ КАПИЩЕ ---\n\nЗАДАЧА:\n• Встреться с Кикиморой\n• Отыщи Кристалл Яви"
-	else:
-		# Обучение
-		if not tutorial_steps_done.get("move", false):
-			text_output = "--- ПЕРВЫЕ ШАГИ СКАЗАНИЯ ---\n\nДЕЙСТВИЕ:\n• Оглядись клавишами WASD"
-		elif not tutorial_steps_done.get("roll", false):
-			text_output = "--- ПЕРВЫЕ ШАГИ СКАЗАНИЯ ---\n\nДЕЙСТВИЕ:\n• Используй SHIFT для рывка"
-		elif not tutorial_steps_done.get("nav", false):
-			text_output = "--- ПЕРВЫЕ ШАГИ СКАЗАНИЯ ---\n\nДЕЙСТВИЕ:\n• Нажми R для входа в Навь"
-		else:
-			text_output = "--- ОБУЧЕНИЕ ЗАВЕРШЕНО ---\n\n• Камни осознаны.\n• Иди к порталу."
+	
+	if current_location_name == "Окраина Чернолесья":
+		text_output = "[color=#e0a651]--- ПЕРВЫЕ ШАГИ ---[/color]\n\n"
+		text_output += "%s Оглядеться (WASD)\n" % ("✔" if quest_objectives["move"] else "•")
+		text_output += "%s Уклониться (SHIFT)\n" % ("✔" if quest_objectives["roll"] else "•")
+		text_output += "%s Изнанка (R)\n" % ("✔" if quest_objectives["nav"] else "•")
+		
+	elif current_location_name == "Древнее Капище":
+		text_output = "[color=#e0a651]--- ГЛАВА I: КАПИЩЕ ---[/color]\n\n"
+		
+		# Если выбран мирный путь, ставим галочку автоматически
+		var is_boss_done = quest_objectives["defeat_kikimora"] or (current_combat_mode == CombatMode.PEACE)
+		var boss_icon = "✔" if is_boss_done else "•"
+		
+		text_output += "%s [color=#888888]Победа над Кикиморой[/color]\n" % boss_icon
+		text_output += "%s Найти Кристалл Яви" % ("✔" if quest_objectives["find_crystal"] else "•")
 	
 	quest_text.text = text_output
 
@@ -438,6 +462,20 @@ func apply_retro_style(panel: Panel, label: Label = null, padding: float = 20.0)
 		label.add_theme_constant_override("shadow_offset_x", 2)
 		label.add_theme_constant_override("shadow_offset_y", 2)
 
+func create_bar_style(color: Color) -> StyleBoxFlat:
+	var style = StyleBoxFlat.new()
+	style.bg_color = color
+	style.corner_radius_top_left = 6
+	style.corner_radius_top_right = 6
+	style.corner_radius_bottom_right = 6
+	style.corner_radius_bottom_left = 6
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.1, 0.1, 0.1, 0.5)
+	return style
+
 func _apply_label_font(label: Label, size: int = 21) -> void:
 	var font_path = "res://assets/fonts/main_font.otf"
 	if ResourceLoader.exists(font_path):
@@ -452,65 +490,80 @@ func build_advanced_hud() -> void:
 	canvas_layer.name = "HUDLayer"
 	add_child(canvas_layer)
 	
+	# Увеличил высоту до 260, чтобы всё гарантированно поместилось
 	var status_panel := Panel.new()
 	status_panel.position = Vector2(40, 40)
-	status_panel.size = Vector2(490, 195)
+	status_panel.size = Vector2(490, 200) 
 	canvas_layer.add_child(status_panel)
 	
+	var margin = MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 20)
+	margin.add_theme_constant_override("margin_top", 15)
+	margin.add_theme_constant_override("margin_right", 20)
+	margin.add_theme_constant_override("margin_bottom", 15)
+	status_panel.add_child(margin)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	# Правильное написание свойства для Godot:
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(vbox)
+	
+	# Заголовок
 	world_label = Label.new()
-	world_label.position = Vector2(25, 20)
-	status_panel.add_child(world_label)
+	world_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(world_label)
 	apply_retro_style(status_panel, world_label, 20.0)
 	
-	# --- Здоровье ---
-	var hp_title := Label.new()
-	hp_title.position = Vector2(25, 80)
-	hp_title.text = "Жизнь:"
-	status_panel.add_child(hp_title)
-	_apply_label_font(hp_title)
+	# Контейнер для статов
+	var stats_vbox = VBoxContainer.new()
+	stats_vbox.add_theme_constant_override("separation", 8)
+	vbox.add_child(stats_vbox)
 	
-	# Создаем новую полоску здоровья
-	hp_bar = ProgressBar.new()
-	hp_bar.position = Vector2(115, 83)
-	hp_bar.size = Vector2(340, 16)
-	hp_bar.max_value = Global.max_hp
-	hp_bar.value = current_hp
-	hp_bar.show_percentage = true
+	var bar_data = [
+		["Жизнь:", Color(0.7, 0.1, 0.1), "hp"],
+		["Дух:", Color(0.22, 0.44, 0.78), "mp"],
+		["Сила:", Color(0.9, 0.7, 0.1), "stamina"]
+	]
 	
-	var hp_style = StyleBoxFlat.new()
-	hp_style.bg_color = Color(0.7, 0.1, 0.1) # Красный
-	hp_style.corner_radius_top_left = 4
-	hp_style.corner_radius_bottom_left = 4
-	hp_bar.add_theme_stylebox_override("fill", hp_style)
-	status_panel.add_child(hp_bar)
+	for data in bar_data:
+		var hbox = HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 15)
+		stats_vbox.add_child(hbox)
+		
+		var title = Label.new()
+		title.text = data[0]
+		title.custom_minimum_size = Vector2(80, 20)
+		hbox.add_child(title)
+		_apply_label_font(title, 18)
+		
+		var bar = ProgressBar.new()
+		bar.custom_minimum_size = Vector2(340, 16)
+		bar.add_theme_stylebox_override("fill", create_bar_style(data[1]))
+		
+		# --- ИСПРАВЛЕНИЕ: ДЕЛАЕМ ФОН ПРОЗРАЧНЫМ ---
+		var bg_style = StyleBoxFlat.new()
+		bg_style.bg_color = Color(0, 0, 0, 0) # Четвертый параметр (0) делает цвет прозрачным
+		bar.add_theme_stylebox_override("background", bg_style)
+		# -------------------------------------------
+		
+		hbox.add_child(bar)
+		
+		match data[2]:
+			"hp": hp_bar = bar
+			"mp": mp_bar = bar
+			"stamina": stamina_bar = bar
 	
-	# --- Сила духа (Дух) ---
-	var mp_title := Label.new()
-	mp_title.position = Vector2(25, 118)
-	mp_title.text = "Дух:"
-	status_panel.add_child(mp_title)
-	_apply_label_font(mp_title)
-	
-	mp_bar = ProgressBar.new()
-	mp_bar.position = Vector2(115, 122)
-	mp_bar.size = Vector2(340, 16)
-	mp_bar.max_value = Global.max_mp
-	mp_bar.value = current_mp
-	mp_bar.show_percentage = true # Включили цифры
-	
-	var mp_style = StyleBoxFlat.new()
-	mp_style.bg_color = Color(0.22, 0.44, 0.78) # Синий
-	mp_style.corner_radius_top_left = 4
-	mp_style.corner_radius_bottom_left = 4
-	mp_bar.add_theme_stylebox_override("fill", mp_style)
-	status_panel.add_child(mp_bar)
-	
+	# Уровень
 	xp_label = Label.new()
-	xp_label.position = Vector2(25, 153)
-	xp_label.text = "Уровень: 1 (0 / 100 XP)"
-	status_panel.add_child(xp_label)
-	_apply_label_font(xp_label)
+	xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Добавляем небольшой отступ сверху, чтобы отделить от полосок
+	xp_label.add_theme_constant_override("margin_top", 10)
+	vbox.add_child(xp_label)
+	_apply_label_font(xp_label, 18)
 	
+	# Диалоговая панель
 	dialogue_panel = Panel.new()
 	dialogue_panel.position = Vector2(360, 770)
 	dialogue_panel.size = Vector2(1200, 250)
@@ -531,7 +584,11 @@ func build_advanced_hud() -> void:
 	dialogue_panel.add_child(dialogue_choices)
 	_apply_label_font(dialogue_choices, 19)
 	
-	update_hp_display()
+	xp_label.text = "Уровень: 1 (DEBUG)"
+	xp_label.visible = true
+	print("XP Label создан и виден: ", xp_label.get_global_rect())
+	
+	update_all_ui()
 
 func build_boss_hp_bar_ui() -> void:
 	boss_ui_layer = CanvasLayer.new()
@@ -562,14 +619,35 @@ func build_boss_hp_bar_ui() -> void:
 
 func build_minimap_ui() -> void:
 	var minimap_panel = Panel.new()
-	minimap_panel.position = Vector2(40, 265)
-	minimap_panel.size = Vector2(190, 190)
+	minimap_panel.position = Vector2(40, 300)
+	minimap_panel.size = Vector2(220, 220)
 	$HUDLayer.add_child(minimap_panel)
-	apply_retro_style(minimap_panel, null, 6.0)
+	
+	# Создаем круглый стиль
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.1, 0.1, 0.9)
+	style.border_width_left = 4; style.border_width_top = 4
+	style.border_width_right = 4; style.border_width_bottom = 4
+	style.border_color = Color(0.7, 0.5, 0.3)
+	style.corner_radius_top_left = 110; style.corner_radius_top_right = 110
+	style.corner_radius_bottom_left = 110; style.corner_radius_bottom_right = 110
+	minimap_panel.add_theme_stylebox_override("panel", style)
+	
+	# Метка "Миникарта" сверху
+	var m_label = Label.new()
+	m_label.text = "Миникарта"
+	# Позиция: x=0, y=высота панели + немного отступа
+	m_label.position = Vector2(0, 230) 
+	m_label.size = Vector2(220, 20)
+	m_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_apply_label_font(m_label, 16)
+	minimap_panel.add_child(m_label)
 	
 	minimap_content = Control.new()
-	minimap_content.position = Vector2(6, 6)
-	minimap_content.size = Vector2(178, 178)
+	minimap_content.position = Vector2(10, 10)
+	minimap_content.size = Vector2(200, 200)
+	# Ограничиваем область видимости, чтобы точки не вылезали за круг
+	minimap_content.clip_contents = true 
 	minimap_panel.add_child(minimap_content)
 
 func build_quest_and_inventory_ui() -> void:
@@ -594,7 +672,7 @@ func build_quest_and_inventory_ui() -> void:
 	
 	# Текст квестов (чистый, без BBCode)
 	quest_text = RichTextLabel.new()
-	quest_text.bbcode_enabled = false
+	quest_text.bbcode_enabled = true
 	quest_text.position = Vector2(25, 60)
 	quest_text.size = Vector2(390, 160)
 	quest_text.scroll_active = false
@@ -772,9 +850,9 @@ func trigger_dialogue(id: String, main_text: String, choices: String) -> void:
 # Вспомогательные заглушки-функции для визуальных эффектов боя
 func update_hp_display() -> void:
 	if is_instance_valid(hp_bar):
-		hp_bar.value = current_hp
+		hp_bar.value = Global.current_hp
 	if is_instance_valid(mp_bar):
-		mp_bar.value = current_mp
+		mp_bar.value = Global.current_mp
 func create_melee_flash(_pos: Vector2) -> void: pass
 func spawn_xp_effect(_pos: Vector2) -> void: pass
 
@@ -786,11 +864,24 @@ func _input(event: InputEvent) -> void:
 		elif event.is_action_pressed("choice3"): handle_dialogue_choice(3)
 		return
 	if event.is_action_pressed("switch_world"): switch_world(!is_nav_world)
+	# Исправленный перекат
 	if event.is_action_pressed("roll") and not is_rolling:
-		is_rolling = true; roll_timer = roll_duration
-		roll_direction = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
-		if roll_direction == Vector2.ZERO: roll_direction = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
-		player_sprite.modulate = Color(0.5, 0.7, 1.0, 0.7); return
+		if Global.current_stamina >= 25.0: # Сначала проверяем стамину
+			Global.current_stamina -= 25.0
+			update_all_ui() # Обновляем полоску сразу
+			
+			is_rolling = true
+			roll_timer = roll_duration
+			roll_direction = Vector2(Input.get_axis("move_left", "move_right"), Input.get_axis("move_up", "move_down")).normalized()
+			if roll_direction == Vector2.ZERO: 
+				roll_direction = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
+			
+			# Визуальный эффект только при успешном перекате
+			player_sprite.modulate = Color(0.5, 0.7, 1.0, 0.7)
+		else:
+			# Можно добавить звук "нет стамины" или просто проигнорировать
+			print("Недостаточно силы для переката!")
+		return
 		
 	if event.is_action_pressed("attack") and not is_rolling:
 		var att_dir = Vector2.LEFT if player_sprite.flip_h else Vector2.RIGHT
@@ -805,8 +896,8 @@ func _input(event: InputEvent) -> void:
 		return
 		
 	if event.is_action_pressed("cast_spell") and not is_rolling:
-		if current_mp >= mp_spell_cost:
-			current_mp -= mp_spell_cost; mp_bar.value = current_mp
+		if Global.current_mp >= mp_spell_cost:
+			Global.current_mp -= mp_spell_cost; mp_bar.value = Global.current_mp
 			var mouse_pos = get_global_mouse_position()
 			var cast_dir = (mouse_pos - player.position).normalized()
 			if cast_dir.x != 0: player_sprite.flip_h = (cast_dir.x < 0)
@@ -862,13 +953,30 @@ func update_location_data(new_location: String) -> void:
 	update_world_label_ui()
 	update_quest_journal()
 func kill_enemy(enemy: CharacterBody2D) -> void:
+	if not is_instance_valid(enemy): return
+	
+	# Эффекты смерти
 	spawn_xp_effect(enemy.position)
+	
+	# Логика победы над боссом
 	if enemy.get_meta("id_tag") == "boss":
+		current_combat_mode = CombatMode.PEACE # <--- Снимаем блокировку с кристалла
 		boss_ui_layer.visible = false
 		world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
+		update_world_label_ui() # Обновляем заголовок, чтобы он не застрял на тексте победы
+		
+	if enemy.get_meta("id_tag") == "boss":
+		quest_objectives["defeat_kikimora"] = true # Ставим галочку
+		update_quest_journal() # Обновляем UI
+		
+	# Удаление врага
 	enemy_list.erase(enemy)
 	level_objects.erase(enemy)
 	enemy.queue_free()
+	
+	# Финальные обновления
+	update_all_ui()
+	update_quest_journal()
 
 func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 	var proj := Node2D.new()
@@ -896,7 +1004,7 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 	# Или просто проверяем, является ли body игроком
 	area.body_entered.connect(func(body):
 		if body == player and not is_rolling:
-			current_hp -= 15.0
+			Global.current_hp -= 15.0
 			update_hp_display()
 			player_sprite.modulate = Color(1.0, 0.3, 0.3)
 			create_tween().tween_property(player_sprite, "modulate", Color(1,1,1), 0.2)
@@ -904,3 +1012,26 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 	)
 	add_child(proj)
 	active_projectiles.append(proj)
+	
+func update_all_ui() -> void:
+	# Обновляем бары
+	if is_instance_valid(hp_bar):
+		hp_bar.max_value = Global.max_hp
+		hp_bar.value = Global.current_hp
+		
+	if is_instance_valid(mp_bar):
+		mp_bar.max_value = Global.max_mp
+		mp_bar.value = Global.current_mp
+		
+	if is_instance_valid(stamina_bar):
+		stamina_bar.max_value = Global.max_stamina
+		stamina_bar.value = Global.current_stamina
+		
+	# Обновляем уровень и XP
+	if is_instance_valid(xp_label):
+		# Предполагаем, что у тебя в Global есть переменные player_level, current_xp и xp_to_next_level
+		xp_label.text = "Уровень: %d (%d / %d XP)" % [
+			Global.player_level, 
+			Global.player_xp, 
+			Global.xp_to_next_level
+		]

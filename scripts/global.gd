@@ -14,7 +14,7 @@ var is_fullscreen: bool = true
 # Игровой прогресс
 var player_level: int = 1
 var player_xp: int = 0
-var xp_to_next_level := 100
+var xp_to_next_level: int = 100
 var max_hp: float = 100.0
 var max_mp: float = 100.0
 var max_stamina: float = 100.0

@@ -2,29 +2,13 @@
 
 [ext_resource type="Script" uid="uid://dq8g1jf5gfjr5" path="res://scripts/game_world.gd" id="1_b4j12"]
 [ext_resource type="SpriteFrames" uid="uid://rs8u4xtmed8c" path="res://assets/wizard_frames.tres" id="2_hpeaq"]
-
-[sub_resource type="SpriteFrames" id="SpriteFrames_hpeaq"]
-animations = [{
-"frames": [],
-"loop": false,
-"name": &"attack",
-"speed": 12.0
-}, {
-"frames": [],
-"loop": true,
-"name": &"idle",
-"speed": 5.0
-}, {
-"frames": [],
-"loop": true,
-"name": &"walk",
-"speed": 5.0
-}]
+[ext_resource type="SpriteFrames" uid="uid://16ot7dhn1iaf" path="res://assets/kikimora_frames.tres" id="3_eb18a"]
 
 [node name="GameWorld" type="Node2D" unique_id=1021353227]
 script = ExtResource("1_b4j12")
 
 [node name="CharacterBody2D" type="CharacterBody2D" parent="." unique_id=1976790732]
+collision_layer = 2
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="CharacterBody2D" unique_id=1222274854]
 sprite_frames = ExtResource("2_hpeaq")
@@ -32,6 +16,9 @@ animation = &"roll"
 
 [node name="Kikimora" type="Node2D" parent="." unique_id=730549128]
 
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Kikimora" unique_id=1897315724]
-sprite_frames = SubResource("SpriteFrames_hpeaq")
+[node name="CharacterBody2D" type="CharacterBody2D" parent="Kikimora" unique_id=884198136]
+collision_layer = 2
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Kikimora/CharacterBody2D" unique_id=1897315724]
+sprite_frames = ExtResource("3_eb18a")
 animation = &"walk"

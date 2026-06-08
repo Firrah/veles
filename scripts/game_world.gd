@@ -59,6 +59,7 @@ var active_projectiles = []
 var level_objects = []
 
 func _ready() -> void:
+	Global.reset_game_data()
 	apply_class_stats()
 	setup_input_map()
 	
@@ -248,25 +249,55 @@ func _process(delta: float) -> void:
 	var dead_projectiles = []
 	
 	for proj in active_projectiles:
-		if is_instance_valid(proj):
-			# ДВИЖЕНИЕ
-			proj.position += proj.get_meta("dir") * proj.get_meta("speed") * delta
+		if not is_instance_valid(proj): continue
+		
+		if proj.has_meta("owner_id") and proj.get_meta("owner_id") == "boss":
+			# Добавляем проверку: если дистанция мала И игрок НЕ в перекате
+			var dist_to_player = proj.global_position.distance_to(player.position)
+			if dist_to_player < 50.0 and not is_rolling:
+				print("БОСС ПОПАЛ ПО ИГРОКУ!")
+				Global.current_hp -= 10.0 
+				update_hp_display()
+				
+				# Визуальный эффект удара по игроку
+				if is_instance_valid(player_anim):
+					player_anim.modulate = Color(1.0, 0.3, 0.3)
+					var tween = create_tween()
+					tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+				
+				proj.queue_free()
+				# ВАЖНО: аккуратно удаляем из массива
+				if active_projectiles.has(proj):
+					active_projectiles.erase(proj)
+		# ДВИЖЕНИЕ: Обязательно используем global_position
+		proj.global_position += proj.get_meta("dir") * proj.get_meta("speed") * delta
+		
+		# ПРОВЕРКА ПОПАДАНИЯ
+		for enemy in enemy_list:
+			if not is_instance_valid(enemy): continue
 			
-			# ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА УРОНА (чтобы не пролетали сквозь врагов)
-			for enemy in enemy_list:
-				if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
-					# Если расстояние меньше 30 пикселей - считаем попаданием
-					if proj.position.distance_to(enemy.position) < 30.0:
-						_on_projectile_hit(enemy)
-						dead_projectiles.append(proj)
-						break # Выходим из цикла врагов, так как снаряд уже попал
+			# 1. ФИЛЬТР: Если снаряд от босса, он не должен ранить босса
+			if proj.has_meta("owner_id") and proj.get_meta("owner_id") == "boss":
+				if enemy.get_meta("id_tag") == "boss":
+					continue # Пропускаем проверку для босса, если снаряд его
+	
+			# 2. Вычисляем дистанцию
+			var distance = proj.global_position.distance_to(enemy.global_position)
 			
-			# Удаление, если снаряд улетел слишком далеко (время жизни)
-			var life = proj.get_meta("lifetime") - delta
-			if life <= 0:
+			# 3. Проверка попадания
+			if distance < 120.0:
+				print("ПОПАДАНИЕ! Расстояние: ", distance)
+				_on_projectile_hit(enemy)
 				dead_projectiles.append(proj)
-			else:
-				proj.set_meta("lifetime", life)
+				break
+		
+		# Удаление (логика жизни)
+		var life = proj.get_meta("lifetime") - delta
+		if life <= 0:
+			if not dead_projectiles.has(proj):
+				dead_projectiles.append(proj)
+		else:
+			proj.set_meta("lifetime", life)
 				
 	# Очистка удаленных снарядов
 	for dp in dead_projectiles:
@@ -281,35 +312,63 @@ func _process(delta: float) -> void:
 			var mouse_pos = get_global_mouse_position()
 			var shoot_dir = (mouse_pos - player.position).normalized()
 			if shoot_dir.x != 0: player_anim.flip_h = (shoot_dir.x < 0)
-			spawn_projectile(player.position, shoot_dir)
+			
+			# МЕНЯЕМ ЗДЕСЬ: добавляем "player" в аргументы
+			spawn_projectile(player.position, shoot_dir, "player")
 	
 	# 5. Обработка врагов
 	for enemy in enemy_list:
 		if not is_instance_valid(enemy) or enemy.get_meta("status") == "friendly": continue
 		
-		var espr = enemy.get_node_or_null("AnimatedSprite2D") # Убедись, что имя совпадает!
+		# УМЕНЬШАЕМ ОБА ТАЙМЕРА
+		var att_t = enemy.get_meta("attack_timer")
+		var melee_t = enemy.get_meta("melee_timer")
+		if att_t > 0: enemy.set_meta("attack_timer", att_t - delta)
+		if melee_t > 0: enemy.set_meta("melee_timer", melee_t - delta)
+		
+		var espr = enemy.get_node_or_null("AnimatedSprite2D")
 		var distance = enemy.position.distance_to(player.position)
 		var move_dir = (player.position - enemy.position).normalized()
-		var att_t = enemy.get_meta("attack_timer")
 		
-		# ЛОГИКА АНИМАЦИИ
+		# Анимации
 		if espr:
-			# Анимация атаки (если таймер атаки почти закончился или активен)
+			var target_anim = "idle"
+			
 			if distance < 150.0 and att_t > 0.5:
-				if espr.sprite_frames.has_animation("attack"): espr.play("attack")
-			# Анимация ходьбы
-			elif enemy.velocity != Vector2.ZERO:
-				if espr.sprite_frames.has_animation("walk"): espr.play("walk")
-			# Анимация бездействия
+				target_anim = "attack"
+			elif enemy.velocity.length() > 10.0:
+				target_anim = "walk"
 			else:
-				if espr.sprite_frames.has_animation("idle"): espr.play("idle")
+				target_anim = "idle"
+			
+			# Играем только если это новая анимация
+			if espr.animation != target_anim:
+				if espr.sprite_frames.has_animation(target_anim):
+					espr.play(target_anim)
 		
-		# Остальная логика движения (твоя)
-		if enemy.get_meta("id_tag") == "boss" and distance > 150.0 and distance < 600.0:
-			enemy.velocity = Vector2.ZERO 
-			if att_t <= 0: 
-				spawn_boss_projectile(enemy.position, player.position)
+		# --- ЛОГИКА АТАК ---
+# 1. Снарядная атака (босс)
+		if enemy.get_meta("id_tag") == "boss" and distance < 600.0 and distance > 150.0:
+			if att_t <= 0:
+				var dir_to_player = (player.position - enemy.position).normalized()
+				# Спавним снаряд с отступом 80px, чтобы он вылетал перед боссом
+				spawn_projectile(enemy.position + dir_to_player * 40.0, dir_to_player, "boss")
 				enemy.set_meta("attack_timer", 2.0)
+			enemy.velocity = Vector2.ZERO
+		
+		# 2. Контактный урон (ближний бой)
+		elif distance < 120.0 and not is_rolling:
+			if melee_t <= 0:
+				Global.current_hp -= 25.0 * Global.enemy_damage_mod
+				enemy.set_meta("melee_timer", 1.5) # Своя перезарядка для ближнего боя
+				update_hp_display()
+				# Эффект удара
+				player_anim.modulate = Color(1.0, 0.3, 0.3)
+				var tween = create_tween()
+				tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+			enemy.velocity = Vector2.ZERO
+		
+		# 3. Ходьба к игроку
 		else:
 			enemy.velocity = move_dir * 110.0 * Global.enemy_speed_mod
 			enemy.move_and_slide()
@@ -377,20 +436,52 @@ func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 	level_objects.append(area)
 
 func spawn_enemy(pos: Vector2, path: String, fallback_color: Color, id_tag: String) -> void:
-	var enemy := CharacterBody2D.new(); enemy.position = pos; enemy.set_meta("id_tag", id_tag)
-	enemy.set_meta("hp", 300.0); enemy.set_meta("status", "aggressive"); enemy.set_meta("attack_timer", 0.0)
+	# 1. Создаем врага
+	var enemy := CharacterBody2D.new()
+	enemy.position = pos
+	enemy.set_meta("id_tag", id_tag)
+	enemy.set_meta("hp", 300.0)
+	enemy.set_meta("status", "aggressive")
+	enemy.set_meta("attack_timer", 0.0)
+	enemy.set_meta("melee_timer", 0.0)
+	enemy.set_meta("hit_tween", null)
 	
-	var spr := Sprite2D.new(); spr.name = "Sprite2D"
-	spr.texture = load_texture_safe(path, Vector2(80, 120), fallback_color)
-	spr.scale = Vector2(2.5, 2.5)
-	enemy.add_child(spr)
+	# 2. Анимация
+	var anim_spr := AnimatedSprite2D.new()
+	anim_spr.name = "AnimatedSprite2D"
+	anim_spr.scale = Vector2(2.5, 2.5)
 	
-	var shape := CollisionShape2D.new(); shape.shape = RectangleShape2D.new(); shape.shape.size = Vector2(140, 220)
+	var frames_res = load("res://assets/kikimora_frames.tres")
+	if frames_res:
+		anim_spr.sprite_frames = frames_res
+		anim_spr.play("idle")
+		enemy.add_child(anim_spr)
+	else:
+		# Заглушка, если файл не найден
+		var spr := Sprite2D.new()
+		spr.texture = load_texture_safe(path, Vector2(80, 120), fallback_color)
+		enemy.add_child(spr)
+	
+	# 3. Коллизия
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(150, 300)
+	print("Кикимора создана. Хитбокс размер: ", rect.size)
+	shape.shape = rect
+	shape.position = Vector2(0, 15)
 	enemy.add_child(shape)
-	add_child(enemy); enemy_list.append(enemy); level_objects.append(enemy)
 
-	boss_hp_bar.max_value = 300.0
-	boss_hp_bar.value = 300.0
+	# 4. ВАЖНО: Добавляем врага в сцену ПЕРЕД тем, как менять UI
+	add_child(enemy)
+	enemy_list.append(enemy)
+	level_objects.append(enemy)
+
+	# 5. UI босса
+	if id_tag == "boss":
+		boss_hp_bar.max_value = 300.0
+		boss_hp_bar.value = 300.0
+		# Если ты хочешь, чтобы полоска была всегда видна при спавне босса:
+		boss_hp_bar.show()
 
 func spawn_item(pos: Vector2, type: String) -> void:
 	var item := Area2D.new(); item.position = pos; item.set_meta("type", type)
@@ -988,16 +1079,20 @@ func apply_class_stats() -> void:
 	if Global.player_class == "Воин":
 		Global.max_hp = 150
 		Global.max_mp = 50
+		Global.max_stamina = 100
 	elif Global.player_class == "Волхв":
 		Global.max_hp = 80
 		Global.max_mp = 150
+		Global.max_stamina = 60
 	elif Global.player_class == "Травник":
 		Global.max_hp = 110
 		Global.max_mp = 100
+		Global.max_stamina = 80
 	else:
 		# Стандартные значения, если класс не выбран
 		Global.max_hp = 100
 		Global.max_mp = 100
+		Global.max_stamina = 90
 func update_location_data(new_location: String) -> void:
 	current_location_name = new_location
 	print("Локация обновлена на: ", new_location)
@@ -1056,15 +1151,16 @@ func kill_enemy(enemy: CharacterBody2D) -> void:
 	update_quest_journal()
 
 func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
-	var proj := Node2D.new()
+	var proj := Area2D.new()
 	# Смещаем спавн на 60 пикселей вперед, чтобы снаряд не задевал босса
 	var dir = (target_pos - start_pos).normalized()
 	proj.position = start_pos + dir * 60.0 
 	
-	proj.set_meta("dir", dir)
+	proj.set_meta("owner_id", "boss")
 	proj.set_meta("speed", 300.0)
 	proj.set_meta("damage", 15.0)
 	proj.set_meta("lifetime", 2.0)
+	active_projectiles.append(proj)
 	
 	var spr := Sprite2D.new()
 	spr.texture = load_texture_safe("res://assets/spell.png", Vector2(20, 20), Color(0.2, 0.8, 0.2))
@@ -1114,30 +1210,54 @@ func update_all_ui() -> void:
 		]
 		
 func _on_projectile_hit(enemy: Node2D) -> void:
-	# Проверяем, существует ли враг и активен ли он
-	if is_instance_valid(enemy) and enemy.get_meta("status") == "aggressive":
+	# 1. Защита от двойного попадания
+	if not is_instance_valid(enemy) or enemy.get_meta("hp") <= 0:
+		return
+		
+	if enemy.get_meta("status") == "aggressive":
 		var damage = 35.0 
 		var enemy_hp = enemy.get_meta("hp") - damage
 		enemy.set_meta("hp", enemy_hp)
 		
-		# Визуальный эффект
+		# 2. Визуальный эффект (мигание красным с исправленным Tween)
+		var espr = enemy.get_node_or_null("AnimatedSprite2D")
+		if espr:
+			# Убиваем старый твин, если он есть, чтобы сбросить цвет
+			var old_tween = enemy.get_meta("hit_tween")
+			if old_tween and old_tween is Tween and old_tween.is_valid():
+				old_tween.kill()
+			
+			# Устанавливаем красный цвет
+			espr.modulate = Color(1.0, 0.3, 0.3)
+			
+			# Создаем новый твин для плавного возврата цвета
+			var new_tween = create_tween()
+			new_tween.tween_property(espr, "modulate", Color(1, 1, 1), 0.3)
+			
+			# Сохраняем ссылку на твин, чтобы потом его можно было убить при следующем ударе
+			enemy.set_meta("hit_tween", new_tween)
+		
 		print("Попадание по врагу! HP: ", enemy_hp)
 		
-		# Обновление UI босса
+		# 3. Обновление UI босса
 		if enemy.get_meta("id_tag") == "boss":
 			boss_hp_bar.value = enemy_hp
 			
-		# Проверка смерти
+		# 4. Проверка смерти
 		if enemy_hp <= 0:
+			# Если враг умер, желательно "убить" и твин, чтобы он не пытался красить уже удаленный объект
+			var final_tween = enemy.get_meta("hit_tween")
+			if final_tween and final_tween is Tween and final_tween.is_valid():
+				final_tween.kill()
 			kill_enemy(enemy)
 
-func spawn_projectile(start_pos: Vector2, dir: Vector2) -> void:
+func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "player") -> void:
 	var proj = Area2D.new()
 	proj.position = start_pos + (dir * 45.0)
 	
-	# 1. Принудительно задаем коллизии
-	proj.collision_layer = 0  # Снаряд не должен сталкиваться с другими снарядами
-	proj.collision_mask = 2   # Снаряд ищет врагов на 2-м слое (проверь, на каком слое Кикимора!)
+	# 1. Настройки коллизий
+	proj.collision_layer = 0
+	proj.collision_mask = 2 
 	
 	# 2. Создаем коллизию
 	var col = CollisionShape2D.new()
@@ -1145,37 +1265,28 @@ func spawn_projectile(start_pos: Vector2, dir: Vector2) -> void:
 	col.shape.radius = 15.0
 	proj.add_child(col)
 	
-	# 3. Подключаем сигнал
+	# 3. Добавляем в сцену
+	add_child(proj)
+	
+	# 4. Подключаем сигнал
 	proj.body_entered.connect(_on_projectile_hit)
 	
-	add_child(proj)
-	active_projectiles.append(proj)
-	
-	# Создаем спрайт снаряда
+	# 5. Спрайт
 	var spr = Sprite2D.new()
-	# Используем стандартный load, если load_texture_safe не определена в твоем скрипте
 	if ResourceLoader.exists("res://assets/spell.png"):
 		spr.texture = load("res://assets/spell.png")
 	else:
-		# Если картинки нет, создаем простой желтый квадратик
 		var img = Image.create(16, 16, false, Image.FORMAT_RGBA8)
 		img.fill(Color.YELLOW)
 		spr.texture = ImageTexture.create_from_image(img)
 	proj.add_child(spr)
 	
-	# Коллизия снаряда
-	var p_col = CollisionShape2D.new()
-	p_col.shape = CircleShape2D.new()
-	p_col.shape.radius = 10.0
-	proj.add_child(p_col)
-	
-	# Установка параметров
+	# 6. Параметры (ДОБАВИЛИ owner_id)
 	proj.set_meta("dir", dir)
 	proj.set_meta("speed", 600.0)
 	proj.set_meta("damage", 30.0)
 	proj.set_meta("lifetime", 2.0)
+	proj.set_meta("owner_id", owner_id) # Теперь снаряд "знает", чей он
 	
-	proj.body_entered.connect(_on_projectile_hit)
-	
-	add_child(proj)
+	# 7. Список активных снарядов
 	active_projectiles.append(proj)

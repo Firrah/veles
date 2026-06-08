@@ -1,6 +1,8 @@
 # res://scripts/global.gd
 extends Node
 
+var game_scene = preload("res://scenes/GameWorld.tscn") # Загружается ОДИН РАЗ при старте
+
 # Настройки игрока
 var player_class: String = "Кудесник"
 var difficulty: String = "Волхв (Норма)"
@@ -74,3 +76,7 @@ func level_up() -> void:
 	player_xp -= xp_to_next_level
 	xp_to_next_level = int(xp_to_next_level * 1.5) # Каждый уровень сложнее предыдущего
 	# Тут можно добавить прирост статов (например, Global.max_hp += 10)
+	
+func change_scene1(path: String):
+	# Если ты хочешь просто переключиться на уже загруженную сцену:
+	get_tree().change_scene_to_packed(game_scene)

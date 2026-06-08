@@ -70,28 +70,43 @@ var attack_delay: float = 0.5    # Задержка в 0.5 секунды меж
 var is_first_run: bool = true # Добавь в переменные класса
 
 func _ready() -> void:
+	# Даем игре 0.5 секунды на загрузку всех узлов, 
+	# чтобы порталы не открылись мгновенно из-за старых данных
+	await get_tree().create_timer(0.5).timeout
+	check_and_open_portal()
+	# 1. Сначала создаем объекты, которые нужны для работы функций
+	canvas_modulate = CanvasModulate.new()
+	add_child(canvas_modulate)
+	
+	# 2. Теперь можем безопасно менять цвет
+	canvas_modulate.color = Color(0.85, 0.85, 0.95)
+	
+	# 3. Настройка пост-обработки (вынесено в отдельный метод)
+	setup_post_processing()
+	
 	if has_node("/root/TransitionManager"):
-		TransitionManager.fade.color.a = 0.0
+		# Добавили проверку, чтобы не падать, если TransitionManager еще не готов
+		if TransitionManager.get("fade"):
+			TransitionManager.fade.color.a = 0.0
+			
 	Global.current_mp = 100.0
 	Global.reset_game_data()
 	apply_class_stats()
-	update_all_ui()
-	setup_input_map()
 	
 	background = TextureRect.new()
 	background.size = Vector2(map_width, map_height)
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	add_child(background)
 	
-	canvas_modulate = CanvasModulate.new()
-	add_child(canvas_modulate)
-	
 	build_player()
 	build_advanced_hud()
 	build_boss_hp_bar_ui()
 	build_minimap_ui()
-	build_quest_and_inventory_ui() # Важно: UI создается до старта квеста
+	build_quest_and_inventory_ui()
 	build_pause_menu_ui()
+	
+	update_all_ui()
+	setup_input_map()
 	
 	start_tutorial_quest()
 	load_location("Окраина Чернолесья", false)
@@ -236,6 +251,9 @@ func _process(delta: float) -> void:
 	# 1. Базовые проверки
 	update_all_ui()
 	check_and_open_portal()
+	
+	if not is_instance_valid(player): return
+	
 	if get_tree().paused or is_dialogue_active: return
 	if Global.current_hp <= 0:
 		set_process(false)
@@ -488,6 +506,15 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	
 	var spr := Sprite2D.new()
 	spr.texture = load_texture_safe("res://assets/crystal.png", Vector2(32, 32), Color.CYAN)
+	
+	# --- ВКЛЮЧАЕМ СВЕЧЕНИЕ ---
+	spr.modulate = Color(3.0, 3.0, 3.0, 1.0) # Яркое свечение для Bloom
+	
+	# --- ПУЛЬСАЦИЯ (необязательно, для красоты) ---
+	var tween = create_tween().set_loops()
+	tween.tween_property(spr, "modulate", Color(5.0, 5.0, 5.0, 1.0), 1.0)
+	tween.tween_property(spr, "modulate", Color(2.0, 2.0, 2.0, 1.0), 1.0)
+	
 	item.add_child(spr)
 	
 	var shape := CollisionShape2D.new()
@@ -495,67 +522,127 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	shape.shape.radius = 50.0
 	item.add_child(shape)
 	
-	# Подключаем логику подбора
+	# Логика подбора
 	item.body_entered.connect(func(body):
 		if body == player:
 			if type == "crystal":
 				inventory["crystal"] += 1
 				update_inventory_ui()
 				item.queue_free()
-	
-	# Теперь, когда кристалл в инвентаре, вызываем проверку появления портала
 				check_and_open_portal()
 	)
 	
-	# ЭТИ СТРОКИ ДОЛЖНЫ БЫТЬ ВНЕ АНОНИМНОЙ ФУНКЦИИ (без отступа)
 	add_child(item)
 	level_objects.append(item)
 
 func spawn_portal(pos: Vector2, target: String) -> Area2D:
 	var portal := Area2D.new()
+	portal.name = "MyPortal"
 	portal.position = pos
 	
-	# Загружаем текстуру
-	var spr := Sprite2D.new()
-	spr.texture = load("res://assets/portal.png")
+	# Мета-данные
+	portal.set_meta("type", "portal")
+	portal.set_meta("is_open", false)
+	portal.set_meta("target", target)
 	
-	# --- ВАЖНО: Делаем его полностью прозрачным при создании ---
-	spr.modulate.a = 0.0 
-	# -----------------------------------------------------------
+	# 1. СОЗДАЕМ МОЩНЫЙ СВЕТ ЗА ПОРТАЛОМ
+	var light := PointLight2D.new()
+	light.name = "PointLight2D"
+	
+	# Создаем программно мягкий градиент
+	var light_size = 256 
+	var img = Image.create(light_size, light_size, false, Image.FORMAT_RGBA8)
+	for y in range(light_size):
+		for x in range(light_size):
+			var center = Vector2(light_size / 2.0, light_size / 2.0)
+			var dist = Vector2(x, y).distance_to(center)
+			var max_dist = light_size / 2.0
+			
+			if dist < max_dist:
+				var alpha = 1.0 - (dist / max_dist)
+				# Мощный спад, чтобы край был мягким
+				alpha = pow(alpha, 2.0)
+				img.set_pixel(x, y, Color(1, 1, 1, alpha * 0.9)) # Ярче в центре
+			else:
+				img.set_pixel(x, y, Color(0, 0, 0, 0)) 
+	var tex = ImageTexture.create_from_image(img)
+	light.texture = tex
+	
+	# -- Настройки мощного света (АУРА) --
+	light.energy = 0.0          # Включаем в open_portal
+	light.texture_scale = 2.5   # Широкий ореол (в 2.5 раза больше спрайта)
+	light.blend_mode = PointLight2D.BLEND_MODE_ADD # Яркое свечение
+	# Цвет света (розово-фиолетовый, чтобы подходил)
+	light.color = Color(1.0, 0.4, 1.0) 
+	
+	# ГАРАНТИРУЕМ, ЧТО СВЕТ СЗАДИ
+	light.z_index = -1 
+	
+	portal.add_child(light)
+	
+	# 2. СОЗДАЕМ СПРАЙТ ПОРТАЛА (ВЕРНУЛИ ЕМУ РОДНЫЕ ЦВЕТА)
+	var spr := Sprite2D.new()
+	spr.name = "Sprite2D"
+	if ResourceLoader.exists("res://assets/portal.png"):
+		spr.texture = load("res://assets/portal.png")
+	else:
+		spr.texture = load("res://icon.svg")
+		
+	# -- НАСТРОЙКИ СПРАЙТА: ОН ДОЛЖЕН БЫТЬ ПОВЕРХ --
+	spr.z_index = 0             # Спрайт на Z=0 (или 1), а свет на Z=-1
+	spr.modulate = Color(1, 1, 1, 1) # Чистый, оригинальный цвет спрайта
 	
 	portal.add_child(spr)
 	
-	portal.set_meta("is_open", false)
-	portal.set_meta("type", "portal")
+	# 1. Создаем материал для спрайта
+	var mat := CanvasItemMaterial.new()
 	
+	# 2. Устанавливаем режим освещения "Unshaded" (Неосвещаемый)
+	# Это заставит спрайт игнорировать любые PointLight2D на сцене
+	mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+	
+	# 3. Применяем материал к спрайту
+	spr.material = mat
+	
+	# 3. КОЛЛАЙДЕР И ОСТАЛЬНОЕ
 	var shape := CollisionShape2D.new()
 	shape.shape = RectangleShape2D.new()
-	shape.shape.size = Vector2(90, 180)
+	# Настрой размер под спрайт (например, под 256x256 спрайт)
+	shape.shape.size = Vector2(100, 200) 
 	portal.add_child(shape)
 	
-	portal.body_entered.connect(func(body): _on_portal_body_entered(body, portal, target))
+	# Слои коллизии
+	portal.collision_layer = 1
+	portal.collision_mask = 1
 	
-	# Добавляем на сцену и в список объектов
+	# Финальные настройки Area2D (скрыт при спавне)
+	# Мы скрываем через прозрачность Z-Index, чтобы он не моргал
+	portal.visible = false
+	portal.modulate.a = 0.0
+	portal.monitoring = false
+	
+	# 4. РЕГИСТРАЦИЯ
 	add_child(portal)
 	level_objects.append(portal)
 	
 	return portal
 
-func _on_portal_body_entered(body: Node2D, portal: Area2D, target: String) -> void:
+func _on_portal_body_entered(body: Node2D, portal: Area2D) -> void:
 	if body != player: return
+	
+	# Получаем target из мета-данных портала внутри функции
+	var target = portal.get_meta("target")
 	
 	if portal.has_meta("is_open") and portal.get_meta("is_open") == false:
 		return
 		
 	if target == "ПОБЕДА":
 		if inventory.get("crystal", 0) >= 1:
-			# Переход на финал
 			TransitionManager.fade_to_scene("res://scenes/Victory.tscn")
 		else:
 			world_label.text = "Кикимора не пустит!"
 		return
 
-	# Для обычных локаций используем load_location
 	load_location(target)
 
 func change_path(new_name: String) -> void:
@@ -823,15 +910,7 @@ func build_advanced_hud() -> void:
 	vbox.add_child(xp_label)
 	_apply_label_font(xp_label, 18)
 	
-	var skip_tutorial_btn = Button.new()
-	skip_tutorial_btn.name = "SkipTutorialButton"
-	skip_tutorial_btn.text = "ПРОПУСТИТЬ ОБУЧЕНИЕ"
-# Задаем размер
-	skip_tutorial_btn.size = Vector2(440, 50)
-# Ставим в координаты (например, центр экрана по X и чуть ниже верха)
-	skip_tutorial_btn.position = Vector2(740, 50)
-	skip_tutorial_btn.pressed.connect(_on_skip_tutorial_pressed)
-	$HUDLayer.add_child(skip_tutorial_btn)
+	create_styled_skip_button()
 	
 	# 3. Диалоговая панель
 	dialogue_panel = Panel.new()
@@ -1381,40 +1460,66 @@ func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "play
 	active_projectiles.append(proj)
 	
 func open_portal(portal: Area2D) -> void:
-	# 1. Меняем статус
+	# 1. Защита от повторного запуска
+	if portal.get_meta("is_open"): return
 	portal.set_meta("is_open", true)
 	
-	# 2. Включаем коллизию, чтобы игрок мог войти
-	portal.monitoring = true 
+	# 2. Активация коллизии и видимости
+	portal.visible = true
+	portal.set_deferred("monitoring", true)
+	portal.set_deferred("monitorable", true)
+	# Начинаем с полной прозрачности всего Area2D
+	portal.modulate.a = 0.0 
 	
-	# 3. Анимация появления
-	# Ищем Sprite2D, который мы добавили как child в spawn_portal
-	var spr: Sprite2D = null
-	for child in portal.get_children():
-		if child is Sprite2D:
-			spr = child
-			break
-			
+	# 3. Активация света
+	var light = portal.get_node_or_null("PointLight2D")
+	if is_instance_valid(light):
+		light.enabled = true    
+		light.energy = 0.0      # Начинаем с 0 энергии
+	
+	var spr = portal.get_node_or_null("Sprite2D")
+	
+	# 4. Создание твинов для плавного появления
+	var t = create_tween().set_parallel(true)
+	
+	# Плавное появление всего Area2D (от 0 до 1 прозрачности)
+	t.tween_property(portal, "modulate:a", 1.0, 1.5)
+	
+	# Анимация спрайта (МЫ УБРАЛИ "ПЕРЕСВЕТ")
 	if is_instance_valid(spr):
-		#print("DEBUG: Анимация портала запущена для ", spr)
-		spr.modulate.a = 0.0 # На всякий случай сбрасываем в 0 перед анимацией
-		var t = create_tween()
-		# Плавное проявление (альфа-канал от 0 до 1) за 1.5 секунды
-		t.tween_property(spr, "modulate:a", 1.0, 1.5)
-		# Эффект масштабирования для красоты:
-		t.parallel().tween_property(spr, "scale", Vector2(1.2, 1.2), 1.5)
-	else:
-		push_error("Анимация портала невозможна: Sprite2D не найден внутри " + str(portal.name))
+		# Спрайт больше не будет пересвечен. Просто плавно проявляется.
+		spr.scale = Vector2(0.5, 0.5)
+		# Анимируем только масштаб для эффекта "развертывания"
+		t.tween_property(spr, "scale", Vector2(1.0, 1.0), 1.5).set_trans(Tween.TRANS_BACK)
+		# Если ты хочешь, чтобы он сам по себе не моргал, 
+		# убедись, что spr.modulate.a в spawn_portal стоит в 1.0.
+	
+	# Анимация света (ВОТ ТУТ МЫ СТАВИМ МОЩНУЮ АУРУ)
+	if is_instance_valid(light):
+		t.tween_property(light, "energy", 4.0, 1.5).set_trans(Tween.TRANS_CUBIC)
+	
+	# 5. Подключение сигнала входа
+	if not portal.body_entered.is_connected(_on_portal_body_entered):
+		# См. Вариант 1 выше, если твоя функция требует target
+		portal.body_entered.connect(func(body): _on_portal_body_entered(body, portal))
 	
 func check_and_open_portal() -> void:
-	# 1. Логика для Окраины Чернолесья (обучение)
-	if current_location_name == "Окраина Чернолесья":
-		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
-			for obj in level_objects:
-				if obj is Area2D and obj.has_meta("type") and obj.get_meta("type") == "portal":
-					if not obj.get_meta("is_open"):
-						open_portal(obj) # Активируем существующий на уровне портал
-		return
+	# Оставляем только самое важное, без лишнего спама
+	for obj in level_objects:
+		if not is_instance_valid(obj) or not obj.has_meta("type"): continue
+		
+		if obj.get_meta("type") == "portal" and not obj.get_meta("is_open"):
+			var should_open = false
+			
+			if current_location_name == "Окраина Чернолесья":
+				if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
+					should_open = true
+			elif current_location_name == "Древнее Капище":
+				if inventory.get("crystal", 0) > 0:
+					should_open = true
+			
+			if should_open:
+				open_portal(obj)
 		
 	if current_location_name == "Древнее Капище":
 		# Проверяем, есть ли кристалл
@@ -1599,3 +1704,109 @@ func remove_tutorial_button() -> void:
 	var btn = get_node_or_null("HUDLayer/SkipTutorialButton")
 	if is_instance_valid(btn):
 		btn.queue_free()
+		
+func create_styled_skip_button() -> void:
+	var skip_tutorial_btn = Button.new()
+	skip_tutorial_btn.name = "SkipTutorialButton"
+	skip_tutorial_btn.text = "ПРОПУСТИТЬ ОБУЧЕНИЕ"
+	skip_tutorial_btn.size = Vector2(440, 50)
+	skip_tutorial_btn.position = Vector2(740, 50)
+	
+	# --- Стилизация ---
+	var style_normal = StyleBoxFlat.new()
+	style_normal.bg_color = Color(0.18, 0.12, 0.11) # Темно-коричневый
+	style_normal.border_width_bottom = 4
+	style_normal.border_color = Color(0.58, 0.42, 0.25) # "Золотистая" кайма
+	style_normal.corner_radius_top_left = 6; style_normal.corner_radius_top_right = 6
+	style_normal.corner_radius_bottom_right = 6; style_normal.corner_radius_bottom_left = 6
+	
+	var style_hover = style_normal.duplicate()
+	style_hover.bg_color = Color(0.26, 0.18, 0.16) # Чуть светлее при наведении
+	style_hover.border_color = Color(0.95, 0.75, 0.3) # Яркое золото при наведении
+	
+	skip_tutorial_btn.add_theme_stylebox_override("normal", style_normal)
+	skip_tutorial_btn.add_theme_stylebox_override("hover", style_hover)
+	
+	# --- Шрифт ---
+	var font_res = load("res://assets/fonts/main_font.otf") if ResourceLoader.exists("res://assets/fonts/main_font.otf") else null
+	if font_res:
+		skip_tutorial_btn.add_theme_font_override("font", font_res)
+		skip_tutorial_btn.add_theme_font_size_override("font_size", 18)
+	
+	# --- Цвета текста ---
+	skip_tutorial_btn.add_theme_color_override("font_color", Color(0.9, 0.85, 0.8))
+	skip_tutorial_btn.add_theme_color_override("font_hover_color", Color(1.0, 0.85, 0.3))
+	
+	# --- Логика ---
+	skip_tutorial_btn.pressed.connect(_on_skip_tutorial_pressed)
+	$HUDLayer.add_child(skip_tutorial_btn)
+	
+func spawn_mist_layer() -> void:
+	# Создаем CanvasLayer с низким слоем, чтобы он был ПОД UI
+	var canvas = CanvasLayer.new()
+	canvas.layer = 1 # Отрисовывается сразу над фоном, но под всеми остальными UI элементами
+	add_child(canvas)
+	
+	var mist = CPUParticles2D.new()
+	mist.position = Vector2(960, 800) 
+	mist.material = CanvasItemMaterial.new()
+	mist.material.light_mode = CanvasItemMaterial.LIGHT_MODE_NORMAL
+	
+	mist.amount = 40
+	mist.lifetime = 25.0 
+	mist.preprocess = 20.0
+	
+	mist.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	mist.emission_rect_extents = Vector2(1200, 100) 
+	
+	mist.gravity = Vector2.ZERO 
+	mist.initial_velocity_min = 20.0
+	mist.initial_velocity_max = 40.0
+	mist.direction = Vector2(1, 0)
+	mist.spread = 0.0
+	
+	var cloud_tex_path = "res://assets/mist.png"
+	if ResourceLoader.exists(cloud_tex_path): mist.texture = load(cloud_tex_path)
+	else: mist.texture = load("res://icon.svg")
+	
+	mist.scale_amount_min = 3.0
+	mist.scale_amount_max = 6.0
+	
+	var color_ramp = Gradient.new()
+	color_ramp.set_color(0, Color(1, 1, 1, 0))
+	color_ramp.set_color(0.2, Color(1, 1, 1, 0.15))
+	color_ramp.set_color(0.8, Color(1, 1, 1, 0.15))
+	color_ramp.set_color(1, Color(1, 1, 1, 0))
+	mist.color_ramp = color_ramp
+	
+	canvas.add_child(mist)
+	
+func setup_post_processing() -> void:
+	# 1. Туман (обычный узел)
+	spawn_mist_layer()
+	
+	# 2. Окружение
+	var env = WorldEnvironment.new()
+	var config = Environment.new()
+	
+	config.background_mode = Environment.BG_CANVAS
+	
+	# Настройка свечения
+	config.glow_enabled = true
+	# В Godot 4 уровни свечения устанавливаются методами:
+	config.set_glow_level(1, 0.5)
+	config.set_glow_level(2, 0.5)
+	config.set_glow_level(3, 0.5) # Можно добавить и 3-й уровень для мягкости
+	
+	config.glow_intensity = 0.8
+	config.glow_strength = 1.0
+	config.glow_bloom = 0.1
+	config.glow_hdr_threshold = 0.9 
+	
+	# Коррекция цвета
+	config.adjustment_enabled = true
+	config.adjustment_contrast = 1.1
+	config.adjustment_saturation = 1.05
+	
+	env.environment = config
+	add_child(env)

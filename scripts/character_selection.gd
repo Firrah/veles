@@ -118,7 +118,7 @@ func create_class_button(parent: Control, title: String, desc: String, pos: Vect
 	
 	btn.pressed.connect(func(): 
 		Global.player_class = _class_id
-		Global.change_scene("res://scenes/GameWorld.tscn")
+		Global.change_scene1("res://scenes/GameWorld.tscn")
 	)
 	parent.add_child(btn)
 

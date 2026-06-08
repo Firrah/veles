@@ -1116,7 +1116,7 @@ func build_pause_menu_ui() -> void:
 	
 	var panel = Panel.new()
 	panel.position = Vector2(710, 290)
-	panel.size = Vector2(500, 520)
+	panel.size = Vector2(500, 550)
 	pause_canvas.add_child(panel)
 	
 	var title = Label.new()
@@ -1130,76 +1130,66 @@ func build_pause_menu_ui() -> void:
 	
 	var font_res = load("res://assets/fonts/main_font.otf") if ResourceLoader.exists("res://assets/fonts/main_font.otf") else null
 	
+	# Стили кнопок
 	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.18, 0.12, 0.11)
-	style_normal.border_width_bottom = 4
-	style_normal.border_color = Color(0.58, 0.42, 0.25)
-	style_normal.corner_radius_top_left = 6; style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_right = 6; style_normal.corner_radius_bottom_left = 6
+	style_normal.bg_color = Color(0.18, 0.12, 0.11); style_normal.border_width_bottom = 4; style_normal.border_color = Color(0.58, 0.42, 0.25)
+	style_normal.set_corner_radius_all(6)
+	var style_hover = style_normal.duplicate(); style_hover.bg_color = Color(0.26, 0.18, 0.16); style_hover.border_color = Color(0.95, 0.75, 0.3)
+	var style_pressed = style_normal.duplicate(); style_pressed.bg_color = Color(0.12, 0.08, 0.07); style_pressed.border_width_bottom = 1; style_pressed.border_color = Color(0.4, 0.3, 0.18)
 	
-	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = Color(0.26, 0.18, 0.16)
-	style_hover.border_color = Color(0.95, 0.75, 0.3)
-	
-	var style_pressed = style_normal.duplicate()
-	style_pressed.bg_color = Color(0.12, 0.08, 0.07)
-	style_pressed.border_width_bottom = 1
-	style_pressed.border_color = Color(0.4, 0.3, 0.18)
-	
-	var setup_btn = func(btn: Button, text: String, pos: Vector2):
+	var setup_btn = func(btn: Button, text: String):
 		btn.text = text
-		btn.position = pos
-		btn.size = Vector2(320, 55)
-		
+		btn.custom_minimum_size = Vector2(320, 55)
 		btn.add_theme_stylebox_override("normal", style_normal)
 		btn.add_theme_stylebox_override("hover", style_hover)
 		btn.add_theme_stylebox_override("pressed", style_pressed)
 		btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-		
 		btn.add_theme_color_override("font_color", Color(0.9, 0.85, 0.8))
-		btn.add_theme_color_override("font_hover_color", Color(1.0, 0.85, 0.3))
-		btn.add_theme_color_override("font_pressed_color", Color(0.6, 0.5, 0.4))
-		
-		if font_res:
-			btn.add_theme_font_override("font", font_res)
-			btn.add_theme_font_size_override("font_size", 18)
-		panel.add_child(btn)
+		if font_res: btn.add_theme_font_override("font", font_res); btn.add_theme_font_size_override("font_size", 18)
+	
+	# КОНТЕЙНЕР ДЛЯ ЦЕНТРОВКИ
+	var vbox = VBoxContainer.new()
+	vbox.position = Vector2(90, 120)
+	vbox.add_theme_constant_override("separation", 15)
+	panel.add_child(vbox)
 	
 	var btn_resume = Button.new()
-	setup_btn.call(btn_resume, "ПРОДОЛЖИТЬ ПУТЬ", Vector2(90, 145))
+	setup_btn.call(btn_resume, "ПРОДОЛЖИТЬ ПУТЬ")
 	btn_resume.pressed.connect(toggle_pause)
+	vbox.add_child(btn_resume)
 	
 	var line = ColorRect.new()
-	line.position = Vector2(90, 230)
-	line.size = Vector2(320, 2)
+	line.custom_minimum_size = Vector2(320, 2)
 	line.color = Color(0.4, 0.3, 0.2, 0.5)
-	panel.add_child(line)
+	vbox.add_child(line)
 	
 	var settings_label = Label.new()
 	settings_label.text = "НАСТРОЙКИ СКАЗА:"
-	settings_label.position = Vector2(0, 255)
-	settings_label.size = Vector2(500, 30)
 	settings_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	settings_label.add_theme_color_override("font_color", Color(0.65, 0.6, 0.55))
 	if font_res: settings_label.add_theme_font_override("font", font_res)
-	settings_label.add_theme_font_size_override("font_size", 16)
-	panel.add_child(settings_label)
+	vbox.add_child(settings_label)
+	
+	vbox.add_child(create_volume_node("ОБЩАЯ", "Master", font_res))
+	vbox.add_child(create_volume_node("МУЗЫКА", "Music", font_res))
+	vbox.add_child(create_volume_node("ЭФФЕКТЫ", "SFX", font_res))
 	
 	var btn_scale = Button.new()
-	setup_btn.call(btn_scale, "ЭКРАН: ПОЛНОРАЗМЕРНЫЙ", Vector2(90, 300))
+	setup_btn.call(btn_scale, "ЭКРАН: ПОЛНОРАЗМЕРНЫЙ")
 	btn_scale.pressed.connect(func():
-		var fs = DisplayServer.window_get_mode()
-		if fs == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-			btn_scale.text = "ЭКРАН: В ОКНЕ"
-		else:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
-			btn_scale.text = "ЭКРАН: ПОЛНОРАЗМЕРНЫЙ"
+		var is_fs = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if is_fs else DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+		btn_scale.text = "ЭКРАН: В ОКНЕ" if is_fs else "ЭКРАН: ПОЛНОРАЗМЕРНЫЙ"
 	)
+	vbox.add_child(btn_scale)
 	
 	var btn_exit = Button.new()
-	setup_btn.call(btn_exit, "ВЫЙТИ В ПОСАД", Vector2(90, 410))
+	setup_btn.call(btn_exit, "ВЫЙТИ В ПОСАД")
 	btn_exit.pressed.connect(func(): get_tree().quit())
+	vbox.add_child(btn_exit)
+	
+	var bottom_spacer = Control.new()
+	bottom_spacer.custom_minimum_size = Vector2(0, 100) # Добавляет 30 пикселей пустоты
+	vbox.add_child(bottom_spacer)
 
 func toggle_pause() -> void:
 	var state = get_tree().paused
@@ -1857,3 +1847,61 @@ func setup_post_processing() -> void:
 	
 	env.environment = config
 	add_child(env)
+
+func create_volume_node(label_text: String, bus_name: String, font: Font) -> HBoxContainer:
+	var hbox = HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 20)
+	
+	var lbl = Label.new()
+	lbl.text = label_text
+	lbl.custom_minimum_size = Vector2(100, 30)
+	if font:
+		lbl.add_theme_font_override("font", font)
+		lbl.add_theme_font_size_override("font_size", 16)
+	lbl.add_theme_color_override("font_color", Color(0.9, 0.8, 0.6))
+	hbox.add_child(lbl)
+	
+	var slider = HSlider.new()
+	slider.custom_minimum_size = Vector2(200, 30)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	
+	# Фон (линия)
+	var style_bg = StyleBoxFlat.new()
+	style_bg.bg_color = Color(0.12, 0.08, 0.07)
+	style_bg.border_width_left = 2; style_bg.border_width_right = 2
+	style_bg.border_color = Color(0.4, 0.3, 0.18)
+	style_bg.corner_radius_top_left = 4; style_bg.corner_radius_bottom_right = 4
+	style_bg.expand_margin_top = 4; style_bg.expand_margin_bottom = 4
+	slider.add_theme_stylebox_override("slider", style_bg)
+	
+	# Закрашенная область (слева)
+	var style_area = style_bg.duplicate()
+	style_area.bg_color = Color(0.58, 0.42, 0.25)
+	slider.add_theme_stylebox_override("grabber_area", style_area)
+	slider.add_theme_stylebox_override("grabber_area_highlight", style_area)
+	
+	# Бегунок
+	var style_grabber = StyleBoxFlat.new()
+	style_grabber.bg_color = Color(1.0, 0.84, 0.3)
+	style_grabber.set_corner_radius_all(8)
+	slider.add_theme_stylebox_override("grabber", style_grabber)
+	slider.add_theme_stylebox_override("grabber_highlight", style_grabber)
+	
+	slider.add_theme_constant_override("grabber_width", 16)
+	slider.add_theme_constant_override("grabber_height", 16)
+	
+	slider.min_value = 0.0; slider.max_value = 1.0; slider.step = 0.05
+	
+	# Установка текущего значения
+	var bus_idx = AudioServer.get_bus_index(bus_name)
+	var vol = db_to_linear(AudioServer.get_bus_volume_db(bus_idx))
+	slider.value = clamp(vol, 0.0, 1.0)
+	
+	# ОДНО правильное подключение сигнала
+	slider.value_changed.connect(func(v): 
+		AudioManager.set_bus_volume(bus_name, v)
+		AudioManager.save_settings() 
+	)
+	
+	hbox.add_child(slider)
+	return hbox

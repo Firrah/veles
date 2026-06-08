@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dre6n4j7m2igx"]
+
+[ext_resource type="Script" uid="uid://c7ft2kx5b0rcn" path="res://scripts/settings_menu.gd" id="1_yelko"]
+
+[node name="SettingsMenu" type="Node2D" unique_id=521742031]
+script = ExtResource("1_yelko")

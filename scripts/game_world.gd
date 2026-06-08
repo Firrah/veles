@@ -554,13 +554,14 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	var spr := Sprite2D.new()
 	spr.texture = load_texture_safe("res://assets/crystal.png", Vector2(32, 32), Color.CYAN)
 	
-	# --- ВКЛЮЧАЕМ СВЕЧЕНИЕ ---
-	spr.modulate = Color(3.0, 3.0, 3.0, 1.0) # Яркое свечение для Bloom
+	# --- СВЕЧЕНИЕ ---
+	spr.modulate = Color(3.0, 3.0, 3.0, 1.0)
 	
-	# --- ПУЛЬСАЦИЯ (необязательно, для красоты) ---
-	var tween = create_tween().set_loops()
-	tween.tween_property(spr, "modulate", Color(5.0, 5.0, 5.0, 1.0), 1.0)
-	tween.tween_property(spr, "modulate", Color(2.0, 2.0, 2.0, 1.0), 1.0)
+	# --- ПУЛЬСАЦИЯ ---
+	# Создаем твин для предмета, а не для портала
+	var t = create_tween()
+	t.tween_property(spr, "modulate", Color(5.0, 5.0, 5.0, 1.0), 1.0)
+	t.tween_property(spr, "modulate", Color(2.0, 2.0, 2.0, 1.0), 1.0)
 	
 	item.add_child(create_blob_shadow(Vector2(1.1, 0.5), 22.0))
 	spr.z_index = 1
@@ -573,13 +574,16 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	
 	# Логика подбора
 	item.body_entered.connect(func(body):
-		if body == player:
-			if type == "crystal":
-				AudioManager.play_game_sfx("pickup")
-				inventory["crystal"] += 1
-				update_inventory_ui()
-				item.queue_free()
-				check_and_open_portal()
+		if body == player and type == "crystal":
+			AudioManager.play_game_sfx("pickup")
+			inventory["crystal"] += 1
+			update_inventory_ui()
+			
+			# Используем call_deferred, чтобы не крашить физику при удалении
+			item.call_deferred("queue_free")
+			
+			# Проверяем порталы после подбора
+			check_and_open_portal()
 	)
 	
 	add_child(item)
@@ -610,27 +614,21 @@ func spawn_portal(pos: Vector2, target: String) -> Area2D:
 			
 			if dist < max_dist:
 				var alpha = 1.0 - (dist / max_dist)
-				# Мощный спад, чтобы край был мягким
 				alpha = pow(alpha, 2.0)
-				img.set_pixel(x, y, Color(1, 1, 1, alpha * 0.9)) # Ярче в центре
+				img.set_pixel(x, y, Color(1, 1, 1, alpha * 0.9))
 			else:
 				img.set_pixel(x, y, Color(0, 0, 0, 0)) 
 	var tex = ImageTexture.create_from_image(img)
 	light.texture = tex
 	
-	# -- Настройки мощного света (АУРА) --
-	light.energy = 0.0          # Включаем в open_portal
-	light.texture_scale = 2.5   # Широкий ореол (в 2.5 раза больше спрайта)
-	light.blend_mode = PointLight2D.BLEND_MODE_ADD # Яркое свечение
-	# Цвет света (розово-фиолетовый, чтобы подходил)
+	light.energy = 0.0
+	light.texture_scale = 2.5
+	light.blend_mode = PointLight2D.BLEND_MODE_ADD
 	light.color = Color(1.0, 0.4, 1.0) 
-	
-	# ГАРАНТИРУЕМ, ЧТО СВЕТ СЗАДИ
 	light.z_index = -1 
-	
 	portal.add_child(light)
 	
-	# 2. СОЗДАЕМ СПРАЙТ ПОРТАЛА (ВЕРНУЛИ ЕМУ РОДНЫЕ ЦВЕТА)
+	# 2. СОЗДАЕМ СПРАЙТ ПОРТАЛА
 	var spr := Sprite2D.new()
 	spr.name = "Sprite2D"
 	if ResourceLoader.exists("res://assets/portal.png"):
@@ -638,44 +636,40 @@ func spawn_portal(pos: Vector2, target: String) -> Area2D:
 	else:
 		spr.texture = load("res://icon.svg")
 		
-	# -- НАСТРОЙКИ СПРАЙТА: ОН ДОЛЖЕН БЫТЬ ПОВЕРХ --
-	spr.z_index = 0             # Спрайт на Z=0 (или 1), а свет на Z=-1
-	spr.modulate = Color(1, 1, 1, 1) # Чистый, оригинальный цвет спрайта
-	
+	spr.z_index = 0
+	spr.modulate = Color(1, 1, 1, 1)
 	portal.add_child(spr)
 	
-	# 1. Создаем материал для спрайта
 	var mat := CanvasItemMaterial.new()
-	
-	# 2. Устанавливаем режим освещения "Unshaded" (Неосвещаемый)
-	# Это заставит спрайт игнорировать любые PointLight2D на сцене
 	mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
-	
-	# 3. Применяем материал к спрайту
 	spr.material = mat
 	
-	# 3. КОЛЛАЙДЕР И ОСТАЛЬНОЕ
+	# 3. КОЛЛАЙДЕР
 	var shape := CollisionShape2D.new()
 	shape.shape = RectangleShape2D.new()
-	# Настрой размер под спрайт (например, под 256x256 спрайт)
 	shape.shape.size = Vector2(100, 200) 
 	portal.add_child(shape)
 	
-	# Слои коллизии
-	portal.collision_layer = 1
-	portal.collision_mask = 1
-	
-	# Финальные настройки Area2D (скрыт при спавне)
-	# Мы скрываем через прозрачность Z-Index, чтобы он не моргал
+	# Финальные настройки состояния (безопасно)
 	portal.visible = false
 	portal.modulate.a = 0.0
-	portal.monitoring = false
 	
-	# 4. РЕГИСТРАЦИЯ
+	# 4. РЕГИСТРАЦИЯ И БЕЗОПАСНАЯ ФИЗИКА
 	add_child(portal)
-	level_objects.append(portal)
+	
+	# Откладываем отключение физики на следующий кадр, чтобы движок не ругался
+	portal.set_deferred("monitoring", false)
+	portal.set_deferred("monitorable", false)
+	
+	# Добавляем в массив через call_deferred, чтобы избежать конфликтов при итерации
+	call_deferred("_register_level_object", portal)
 	
 	return portal
+
+# Вспомогательная функция для регистрации
+func _register_level_object(obj: Node) -> void:
+	if not level_objects.has(obj):
+		level_objects.append(obj)
 
 func _on_portal_body_entered(body: Node2D, portal: Area2D) -> void:
 	if body != player: return
@@ -1511,49 +1505,45 @@ func open_portal(portal: Area2D) -> void:
 	if portal.get_meta("is_open"): return
 	portal.set_meta("is_open", true)
 	
-	# 2. Активация коллизии и видимости
-	portal.visible = true
+	# 2. Активация коллизии
 	portal.set_deferred("monitoring", true)
 	portal.set_deferred("monitorable", true)
-	# Начинаем с полной прозрачности всего Area2D
+	
+	# 3. Настройка внешнего вида перед анимацией
+	portal.visible = true
 	portal.modulate.a = 0.0 
 	
-	# 3. Активация света
 	var light = portal.get_node_or_null("PointLight2D")
 	if is_instance_valid(light):
-		light.enabled = true    
-		light.energy = 0.0      # Начинаем с 0 энергии
+		light.enabled = true
+		light.energy = 0.0
 	
 	var spr = portal.get_node_or_null("Sprite2D")
+	if is_instance_valid(spr):
+		spr.scale = Vector2(0.5, 0.5)
 	
-	# 4. Создание твинов для плавного появления
+	# 4. СОЗДАНИЕ ТВИНА В ТОЙ ЖЕ ОБЛАСТИ ВИДИМОСТИ
 	var t = create_tween().set_parallel(true)
 	
-	# Плавное появление всего Area2D (от 0 до 1 прозрачности)
+	# Теперь 'portal' — это аргумент самой функции, он здесь 100% виден
 	t.tween_property(portal, "modulate:a", 1.0, 1.5)
 	
-	# Анимация спрайта (МЫ УБРАЛИ "ПЕРЕСВЕТ")
 	if is_instance_valid(spr):
-		# Спрайт больше не будет пересвечен. Просто плавно проявляется.
-		spr.scale = Vector2(0.5, 0.5)
-		# Анимируем только масштаб для эффекта "развертывания"
 		t.tween_property(spr, "scale", Vector2(1.0, 1.0), 1.5).set_trans(Tween.TRANS_BACK)
-		# Если ты хочешь, чтобы он сам по себе не моргал, 
-		# убедись, что spr.modulate.a в spawn_portal стоит в 1.0.
 	
-	# Анимация света (ВОТ ТУТ МЫ СТАВИМ МОЩНУЮ АУРУ)
 	if is_instance_valid(light):
 		t.tween_property(light, "energy", 4.0, 1.5).set_trans(Tween.TRANS_CUBIC)
 	
-	# 5. Подключение сигнала входа
+	# 5. Сигнал (используем .bind(portal), чтобы передать его в функцию обработки)
 	if not portal.body_entered.is_connected(_on_portal_body_entered):
-		# См. Вариант 1 выше, если твоя функция требует target
-		portal.body_entered.connect(func(body): 
-			AudioManager.play_game_sfx("portal")
-			_on_portal_body_entered(body, portal))
+		portal.body_entered.connect(_on_portal_body_entered.bind(portal))
+
+# Добавь эту функцию-прослойку, чтобы правильно обрабатывать сигналы
+func _on_portal_body_entered_internal(body: Node2D, portal: Area2D) -> void:
+	_on_portal_body_entered(body, portal)
 	
 func check_and_open_portal() -> void:
-	# Оставляем только самое важное, без лишнего спама
+	# 1. Сначала ищем существующие порталы
 	for obj in level_objects:
 		if not is_instance_valid(obj) or not obj.has_meta("type"): continue
 		
@@ -1570,21 +1560,31 @@ func check_and_open_portal() -> void:
 			if should_open:
 				open_portal(obj)
 		
-	if current_location_name == "Древнее Капище":
-		# Проверяем, есть ли кристалл
-		if inventory.get("crystal", 0) > 0:
-			# Проверяем, не создан ли уже портал (чтобы не спавнить их пачками)
-			var portal_exists = false
-			for obj in level_objects:
-				if is_instance_valid(obj) and obj.has_meta("type") and obj.get_meta("type") == "portal":
-					portal_exists = true
-					break
+	# 2. Логика спавна нового портала в Капище (БЕЗОПАСНО)
+	if current_location_name == "Древнее Капище" and inventory.get("crystal", 0) > 0:
+		var portal_exists = false
+		for obj in level_objects:
+			if is_instance_valid(obj) and obj.has_meta("type") and obj.get_meta("type") == "portal":
+				portal_exists = true
+				break
+		
+		if not portal_exists:
+			print("Кристалл найден! Планирую создание портала...")
+			# Используем call_deferred, чтобы движок создал его в "безопасное" время
+			call_deferred("_safe_spawn_and_open_portal")
+
+# Дополнительная функция-прослойка для безопасного спавна
+func _safe_spawn_and_open_portal() -> void:
+	# Двойная проверка на всякий случай, чтобы не заспавнить дважды
+	var portal_exists = false
+	for obj in level_objects:
+		if is_instance_valid(obj) and obj.has_meta("type") and obj.get_meta("type") == "portal":
+			portal_exists = true
+			break
 			
-			if not portal_exists:
-				print("Кристалл найден! Создаю портал.")
-				var p = spawn_portal(Vector2(2800, 750), "ПОБЕДА")
-				# Сразу делаем его активным
-				open_portal(p)
+	if not portal_exists:
+		var p = spawn_portal(Vector2(2800, 750), "ПОБЕДА")
+		open_portal(p)
 
 # Измени определение функции:
 func spawn_crystal_reward(pos: Vector2 = Vector2.ZERO) -> void:

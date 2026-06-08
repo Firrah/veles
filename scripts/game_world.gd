@@ -70,9 +70,6 @@ var attack_delay: float = 0.5    # Задержка в 0.5 секунды меж
 var is_first_run: bool = true # Добавь в переменные класса
 
 func _ready() -> void:
-	# Даем игре 0.5 секунды на загрузку всех узлов, 
-	# чтобы порталы не открылись мгновенно из-за старых данных
-	await get_tree().create_timer(0.5).timeout
 	check_and_open_portal()
 	# 1. Сначала создаем объекты, которые нужны для работы функций
 	canvas_modulate = CanvasModulate.new()
@@ -1566,10 +1563,13 @@ func _process_enemies(delta: float) -> void:
 		# Анимации
 		if espr:
 			var target_anim = "idle"
-			if distance < 150.0 and att_t > 0.5: target_anim = "attack"
-			elif enemy.velocity.length() > 10.0: target_anim = "walk"
-			else: target_anim = "idle"
-			
+
+	# Во время ближней атаки держим attack
+			if distance < 150.0 and melee_t > 0.0:
+				target_anim = "attack"
+			elif enemy.velocity.length() > 10.0:
+				target_anim = "walk"
+
 			if espr.animation != target_anim:
 				if espr.sprite_frames.has_animation(target_anim):
 					espr.play(target_anim)
@@ -1586,6 +1586,9 @@ func _process_enemies(delta: float) -> void:
 		# 2. Контактный урон (ближний бой)
 		elif distance < 120.0 and not is_rolling:
 			if melee_t <= 0:
+				if espr and espr.sprite_frames.has_animation("attack"):
+					espr.play("attack")
+
 				Global.current_hp -= 25.0 * Global.enemy_damage_mod
 				enemy.set_meta("melee_timer", 1.5)
 				update_all_ui()

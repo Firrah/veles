@@ -69,6 +69,9 @@ var attack_delay: float = 0.5    # Задержка в 0.5 секунды меж
 
 var is_first_run: bool = true # Добавь в переменные класса
 
+const PLAYER_GLOW := Color(1.35, 1.28, 1.42, 1.0)
+const ENEMY_GLOW := Color(1.22, 1.18, 1.28, 1.0)
+
 func _ready() -> void:
 	check_and_open_portal()
 	# 1. Сначала создаем объекты, которые нужны для работы функций
@@ -93,6 +96,7 @@ func _ready() -> void:
 	background = TextureRect.new()
 	background.size = Vector2(map_width, map_height)
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	background.z_index = -100
 	add_child(background)
 	
 	build_player()
@@ -145,6 +149,40 @@ func load_texture_safe(path: String, fallback_size: Vector2, fallback_color: Col
 	var img := Image.create(int(fallback_size.x), int(fallback_size.y), false, Image.FORMAT_RGBA8)
 	img.fill(fallback_color)
 	return ImageTexture.create_from_image(img)
+
+var _blob_shadow_texture: Texture2D
+
+func _get_blob_shadow_texture() -> Texture2D:
+	if _blob_shadow_texture != null:
+		return _blob_shadow_texture
+	var tex_size := 64
+	var img := Image.create(tex_size, tex_size, false, Image.FORMAT_RGBA8)
+	var center := Vector2(tex_size * 0.5, tex_size * 0.5)
+	for y in tex_size:
+		for x in tex_size:
+			var dx := (x - center.x) / (tex_size * 0.48)
+			var dy := (y - center.y) / (tex_size * 0.32)
+			var dist := sqrt(dx * dx + dy * dy)
+			if dist < 1.0:
+				var alpha := pow(1.0 - dist, 1.2) * 0.92
+				img.set_pixel(x, y, Color(0, 0, 0, alpha))
+			else:
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+	_blob_shadow_texture = ImageTexture.create_from_image(img)
+	return _blob_shadow_texture
+
+func create_blob_shadow(shadow_scale: Vector2 = Vector2(1.4, 0.55), y_offset: float = 40.0) -> Sprite2D:
+	var shadow := Sprite2D.new()
+	shadow.name = "Shadow"
+	shadow.texture = _get_blob_shadow_texture()
+	shadow.scale = shadow_scale
+	shadow.position.y = y_offset
+	shadow.z_index = 0
+	shadow.modulate = Color(0, 0, 0, 0.6)
+	return shadow
+
+func apply_character_glow(sprite: CanvasItem, glow: Color) -> void:
+	sprite.modulate = glow
 	
 var player_anim: AnimatedSprite2D # Заменили player_sprite
 
@@ -169,10 +207,12 @@ func build_player() -> void:
 	# Устанавливаем настройки спрайта
 	player_anim.animation = "idle"
 	player_anim.scale = Vector2(1.5, 1.5)
-	player_anim.z_index = 10 # Убедимся, что спрайт выше фона
+	player_anim.z_index = 1
 	
+	player.add_child(create_blob_shadow(Vector2(2.4, 0.75), 82.0))
 	# 3. Добавляем спрайт в дерево ПЕРЕД запуском анимации
 	player.add_child(player_anim)
+	apply_character_glow(player_anim, PLAYER_GLOW)
 	
 	# 4. Запускаем анимацию только после добавления в дерево
 	if player_anim.sprite_frames.has_animation("idle"):
@@ -371,7 +411,7 @@ func _trigger_hit_effect() -> void:
 			player_anim.get_meta("hit_tween").kill()
 		player_anim.modulate = Color(1.0, 0.3, 0.3)
 		var t = create_tween()
-		t.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+		t.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
 		player_anim.set_meta("hit_tween", t)
 
 func handle_dialogue_choice(index: int) -> void:
@@ -423,12 +463,11 @@ func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 	area.position = pos
 	
 	var spr := Sprite2D.new()
-	# ЗАМЕНИ ЭТУ СТРОКУ:
-	# spr.texture = load_texture_safe("res://assets/stone.png", Vector2(50, 60), Color(0.4, 0.4, 0.4))
+	spr.texture = load("res://assets/tutorial_stone.png")
+	spr.scale = Vector2(1.5, 1.5)
+	spr.z_index = 1  # ← добавь это, чтобы спрайт был поверх тени
 	
-	# НА ЭТУ (укажи путь к твоей картинке камня):
-	spr.texture = load("res://assets/tutorial_stone.png") # Путь к твоей текстуре
-	spr.scale = Vector2(1.5, 1.5) # Настрой размер, если текстура слишком большая
+	area.add_child(create_blob_shadow(Vector2(2.0, 0.6), 55.0))  # ← тень
 	area.add_child(spr)
 	
 	var shape := CollisionShape2D.new()
@@ -460,20 +499,25 @@ func spawn_enemy(pos: Vector2, path: String, fallback_color: Color, id_tag: Stri
 	enemy.set_meta("hit_tween", null)
 	
 	# 2. Анимация
+	enemy.add_child(create_blob_shadow(Vector2(5.8, 1.8), 220.0))
 	var anim_spr := AnimatedSprite2D.new()
 	anim_spr.name = "AnimatedSprite2D"
 	anim_spr.scale = Vector2(2.5, 2.5)
+	anim_spr.z_index = 1
 	
 	var frames_res = load("res://assets/kikimora_frames.tres")
 	if frames_res:
 		anim_spr.sprite_frames = frames_res
 		anim_spr.play("idle")
 		enemy.add_child(anim_spr)
+		apply_character_glow(anim_spr, ENEMY_GLOW)
 	else:
 		# Заглушка, если файл не найден
 		var spr := Sprite2D.new()
 		spr.texture = load_texture_safe(path, Vector2(80, 120), fallback_color)
+		spr.z_index = 1
 		enemy.add_child(spr)
+		apply_character_glow(spr, ENEMY_GLOW)
 	
 	# 3. Коллизия
 	var shape := CollisionShape2D.new()
@@ -512,6 +556,8 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	tween.tween_property(spr, "modulate", Color(5.0, 5.0, 5.0, 1.0), 1.0)
 	tween.tween_property(spr, "modulate", Color(2.0, 2.0, 2.0, 1.0), 1.0)
 	
+	item.add_child(create_blob_shadow(Vector2(1.1, 0.5), 22.0))
+	spr.z_index = 1
 	item.add_child(spr)
 	
 	var shape := CollisionShape2D.new()
@@ -1328,7 +1374,7 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 			Global.current_hp -= 15.0
 			update_all_ui()
 			player_anim.modulate = Color(1.0, 0.3, 0.3)
-			create_tween().tween_property(player_anim, "modulate", Color(1,1,1), 0.2)
+			create_tween().tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
 			proj.queue_free()
 	)
 	add_child(proj)
@@ -1378,7 +1424,7 @@ func _on_projectile_hit(enemy: Node2D) -> void:
 			
 			espr.modulate = Color(1.0, 0.3, 0.3)
 			var new_tween = create_tween()
-			new_tween.tween_property(espr, "modulate", Color(1, 1, 1), 0.3)
+			new_tween.tween_property(espr, "modulate", ENEMY_GLOW, 0.3)
 			enemy.set_meta("hit_tween", new_tween)
 		
 		# 3. Обновление UI босса
@@ -1595,7 +1641,7 @@ func _process_enemies(delta: float) -> void:
 				# Эффект удара
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
-				tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+				tween.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
 			enemy.velocity = Vector2.ZERO
 		
 		# 3. Ходьба к игроку
@@ -1614,7 +1660,7 @@ func _process_enemies(delta: float) -> void:
 			if is_instance_valid(player_anim):
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
-				tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+				tween.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
 func play_hit_effect(pos: Vector2) -> void:
 	var p = CPUParticles2D.new()
 	p.position = pos
@@ -1650,6 +1696,8 @@ func spawn_herb(pos: Vector2) -> void:
 		spr.texture = ImageTexture.create_from_image(img)
 		
 	spr.scale = Vector2(2, 2) # Немного увеличим для заметности
+	herb.add_child(create_blob_shadow(Vector2(1.3, 0.55), 30.0))
+	spr.z_index = 1
 	herb.add_child(spr)
 	
 	var shape := CollisionShape2D.new()
@@ -1745,44 +1793,41 @@ func create_styled_skip_button() -> void:
 	$HUDLayer.add_child(skip_tutorial_btn)
 	
 func spawn_mist_layer() -> void:
-	# Создаем CanvasLayer с низким слоем, чтобы он был ПОД UI
-	var canvas = CanvasLayer.new()
-	canvas.layer = 1 # Отрисовывается сразу над фоном, но под всеми остальными UI элементами
-	add_child(canvas)
-	
 	var mist = CPUParticles2D.new()
-	mist.position = Vector2(960, 800) 
-	mist.material = CanvasItemMaterial.new()
-	mist.material.light_mode = CanvasItemMaterial.LIGHT_MODE_NORMAL
+	mist.name = "GroundMist"
+	mist.z_index = -50
+	mist.position = Vector2(map_width * 0.5, map_height * 0.62)
 	
-	mist.amount = 40
-	mist.lifetime = 25.0 
+	mist.amount = 20
+	mist.lifetime = 30.0
 	mist.preprocess = 20.0
 	
 	mist.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
-	mist.emission_rect_extents = Vector2(1200, 100) 
+	mist.emission_rect_extents = Vector2(map_width * 0.45, 160)
 	
-	mist.gravity = Vector2.ZERO 
-	mist.initial_velocity_min = 20.0
-	mist.initial_velocity_max = 40.0
+	mist.gravity = Vector2.ZERO
+	mist.initial_velocity_min = 12.0
+	mist.initial_velocity_max = 28.0
 	mist.direction = Vector2(1, 0)
 	mist.spread = 0.0
 	
 	var cloud_tex_path = "res://assets/mist.png"
-	if ResourceLoader.exists(cloud_tex_path): mist.texture = load(cloud_tex_path)
-	else: mist.texture = load("res://icon.svg")
+	if ResourceLoader.exists(cloud_tex_path):
+		mist.texture = load(cloud_tex_path)
+	else:
+		mist.texture = load("res://icon.svg")
 	
-	mist.scale_amount_min = 3.0
-	mist.scale_amount_max = 6.0
+	mist.scale_amount_min = 2.5
+	mist.scale_amount_max = 5.0
 	
 	var color_ramp = Gradient.new()
 	color_ramp.set_color(0, Color(1, 1, 1, 0))
-	color_ramp.set_color(0.2, Color(1, 1, 1, 0.15))
-	color_ramp.set_color(0.8, Color(1, 1, 1, 0.15))
+	color_ramp.set_color(0.2, Color(1, 1, 1, 0.3))
+	color_ramp.set_color(0.8, Color(1, 1, 1, 0.3))
 	color_ramp.set_color(1, Color(1, 1, 1, 0))
 	mist.color_ramp = color_ramp
 	
-	canvas.add_child(mist)
+	add_child(mist)
 	
 func setup_post_processing() -> void:
 	# 1. Туман (обычный узел)
@@ -1796,15 +1841,14 @@ func setup_post_processing() -> void:
 	
 	# Настройка свечения
 	config.glow_enabled = true
-	# В Godot 4 уровни свечения устанавливаются методами:
-	config.set_glow_level(1, 0.5)
-	config.set_glow_level(2, 0.5)
-	config.set_glow_level(3, 0.5) # Можно добавить и 3-й уровень для мягкости
+	config.set_glow_level(1, 0.55)
+	config.set_glow_level(2, 0.45)
+	config.set_glow_level(3, 0.35)
 	
-	config.glow_intensity = 0.8
-	config.glow_strength = 1.0
-	config.glow_bloom = 0.1
-	config.glow_hdr_threshold = 0.9 
+	config.glow_intensity = 0.65
+	config.glow_strength = 0.9
+	config.glow_bloom = 0.08
+	config.glow_hdr_threshold = 0.72
 	
 	# Коррекция цвета
 	config.adjustment_enabled = true

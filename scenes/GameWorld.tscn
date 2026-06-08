@@ -22,3 +22,6 @@ collision_layer = 2
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Kikimora/CharacterBody2D" unique_id=1897315724]
 sprite_frames = ExtResource("3_eb18a")
 animation = &"walk"
+
+[node name="CPUParticles2D" type="CPUParticles2D" parent="." unique_id=1449669545]
+emitting = false

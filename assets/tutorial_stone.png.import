@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfrcr6t8qj2jl"
-path="res://.godot/imported/crystal.png-be9f29c2e46b40566ce6cf2af1fd60ee.ctex"
+uid="uid://dy6u3jkcducxh"
+path="res://.godot/imported/tutorial_stone.png-7528338a9dde93a9d0ffd227d3469ad3.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/crystal.png"
-dest_files=["res://.godot/imported/crystal.png-be9f29c2e46b40566ce6cf2af1fd60ee.ctex"]
+source_file="res://assets/tutorial_stone.png"
+dest_files=["res://.godot/imported/tutorial_stone.png-7528338a9dde93a9d0ffd227d3469ad3.ctex"]
 
 [params]
 

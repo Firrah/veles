@@ -57,10 +57,13 @@ var roll_direction: Vector2 = Vector2.ZERO
 var enemy_list = []
 var active_projectiles = []
 var level_objects = []
+var attack_cooldown: float = 0.0 # Таймер задержки выстрела
+var attack_delay: float = 0.5    # Задержка в 0.5 секунды между выстрелами
 
 func _ready() -> void:
 	Global.reset_game_data()
 	apply_class_stats()
+	update_all_ui()
 	setup_input_map()
 	
 	background = TextureRect.new()
@@ -80,7 +83,6 @@ func _ready() -> void:
 	
 	start_tutorial_quest()
 	load_location("Окраина Чернолесья")
-	update_hp_display()
 
 func start_tutorial_quest() -> void:
 	if quest_text:
@@ -182,16 +184,14 @@ func load_location(location_name: String) -> void:
 	if location_name == "Окраина Чернолесья":
 		tutorial_steps_done = {"move": false, "roll": false, "nav": false}
 		background.texture = load_texture_safe("res://assets/bg_tutorial.png", Vector2(1920, 1080), Color(0.12, 0.14, 0.12))
-		spawn_tutorial_trigger(Vector2(700, 500), "move", "Камень Движения: Векторы WASD направляют твой шаг.")
+		spawn_tutorial_trigger(Vector2(700, 600), "move", "Камень Движения: Векторы WASD направляют твой шаг.")
 		spawn_tutorial_trigger(Vector2(1400, 700), "roll", "Камень Уклонения: Нажатие SHIFT дарует перекат.")
-		spawn_tutorial_trigger(Vector2(2100, 400), "nav", "Камень Нави: Клавиша R открывает Изнанку Мира.")
-		spawn_portal(Vector2(2900, 500), "Древнее Капище")
+		spawn_tutorial_trigger(Vector2(2100, 800), "nav", "Камень Нави: Клавиша R открывает Изнанку Мира.")
+		spawn_portal(Vector2(2800, 750), "Древнее Капище")
 		
 	elif location_name == "Древнее Капище":
 		background.texture = load_texture_safe("res://assets/bg_shrine.png", Vector2(1920, 1080), Color(0.15, 0.1, 0.15))
 		spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
-		spawn_item(Vector2(1750, 750), "crystal")
-		spawn_portal(Vector2(3000, 700), "ПОБЕДА")
 		
 		trigger_dialogue("kikimora_start", "Кикимора Болотная: Кто посмел осквернить Древнее Капище?\nУбирайся, или твои кости сгниют в этой топи!", "[1] Договориться мирно (Дипломатия) | [2] Напасть (Бой)")
 		
@@ -199,6 +199,7 @@ func load_location(location_name: String) -> void:
 
 func _process(delta: float) -> void:
 	update_all_ui()
+	check_and_open_portal()
 	
 	if get_tree().paused or is_dialogue_active: return
 	if Global.current_hp <= 0:
@@ -235,14 +236,13 @@ func _process(delta: float) -> void:
 	player.move_and_slide()
 	player.position = player.position.clamp(Vector2.ZERO, Vector2(map_width, map_height))
 	# Ограничение области передвижения
-	player.position.x = clamp(player.position.x, 0, map_width)
-	player.position.y = clamp(player.position.y, 0, map_height)
+	player.position.x = clamp(player.position.x, 100, map_width - 100)
+	player.position.y = clamp(player.position.y, 500, map_height - 200)
 	
 	# 3. Регенерация и UI
 	Global.current_mp = min(Global.current_mp + mp_regen_speed_yav * delta, Global.max_mp)
 	Global.current_stamina = min(Global.current_stamina + stamina_regen_speed * delta, Global.max_stamina)
-	mp_bar.value = Global.current_mp
-	stamina_bar.value = Global.current_stamina
+	update_all_ui()
 	update_minimap()
 	
 # 4. Атака магией и движение снарядов
@@ -251,24 +251,43 @@ func _process(delta: float) -> void:
 	for proj in active_projectiles:
 		if not is_instance_valid(proj): continue
 		
+		# Обновляем время жизни снаряда (чтобы оно уменьшалось)
+		var lifetime = proj.get_meta("lifetime") - get_process_delta_time()
+		proj.set_meta("lifetime", lifetime)
+		
+		# Если время вышло - удаляем
+		if lifetime <= 0:
+			proj.queue_free()
+			dead_projectiles.append(proj)
+			continue
+		
+		# Логика попадания босса по игроку
 		if proj.has_meta("owner_id") and proj.get_meta("owner_id") == "boss":
-			# Добавляем проверку: если дистанция мала И игрок НЕ в перекате
+			# Активируем снаряд только через 0.15 секунды после спавна (защита от мгновенного урона)
+			if lifetime > 1.85: 
+				continue
+
 			var dist_to_player = proj.global_position.distance_to(player.position)
+			
 			if dist_to_player < 50.0 and not is_rolling:
 				print("БОСС ПОПАЛ ПО ИГРОКУ!")
-				Global.current_hp -= 10.0 
-				update_hp_display()
+				Global.current_hp = max(0, Global.current_hp - 10.0)
+				print("Новое ХП: ", Global.current_hp)
+				update_all_ui()
 				
-				# Визуальный эффект удара по игроку
+				# Визуальный эффект удара (покраснение игрока)
 				if is_instance_valid(player_anim):
+					# Убиваем старый твин, если он активен, чтобы не было конфликтов
+					if player_anim.has_meta("hit_tween") and is_instance_valid(player_anim.get_meta("hit_tween")):
+						player_anim.get_meta("hit_tween").kill()
+						
 					player_anim.modulate = Color(1.0, 0.3, 0.3)
 					var tween = create_tween()
 					tween.tween_property(player_anim, "modulate", Color(1, 1, 1), 0.2)
+					player_anim.set_meta("hit_tween", tween)
 				
 				proj.queue_free()
-				# ВАЖНО: аккуратно удаляем из массива
-				if active_projectiles.has(proj):
-					active_projectiles.erase(proj)
+				dead_projectiles.append(proj)
 		# ДВИЖЕНИЕ: Обязательно используем global_position
 		proj.global_position += proj.get_meta("dir") * proj.get_meta("speed") * delta
 		
@@ -304,11 +323,17 @@ func _process(delta: float) -> void:
 		if is_instance_valid(dp):
 			active_projectiles.erase(dp)
 			dp.queue_free()
-
+	
+	# Уменьшаем таймер задержки (если он больше 0)
+	if attack_cooldown > 0:
+		attack_cooldown -= delta
+	
 	# ВЫСТРЕЛ
-	if Input.is_action_just_pressed("cast_spell") and not is_rolling:
+	if Input.is_action_just_pressed("cast_spell") and not is_rolling and attack_cooldown <= 0:
 		if Global.current_mp >= mp_spell_cost:
 			Global.current_mp -= mp_spell_cost
+			attack_cooldown = attack_delay
+			
 			var mouse_pos = get_global_mouse_position()
 			var shoot_dir = (mouse_pos - player.position).normalized()
 			if shoot_dir.x != 0: player_anim.flip_h = (shoot_dir.x < 0)
@@ -361,7 +386,7 @@ func _process(delta: float) -> void:
 			if melee_t <= 0:
 				Global.current_hp -= 25.0 * Global.enemy_damage_mod
 				enemy.set_meta("melee_timer", 1.5) # Своя перезарядка для ближнего боя
-				update_hp_display()
+				update_all_ui()
 				# Эффект удара
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
@@ -380,7 +405,7 @@ func _process(delta: float) -> void:
 		if distance < 110.0 and not is_rolling and att_t <= 0:
 			Global.current_hp -= 25.0 * Global.enemy_damage_mod
 			enemy.set_meta("attack_timer", 1.4)
-			update_hp_display()
+			update_all_ui()
 			if is_instance_valid(player_anim):
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
@@ -397,6 +422,7 @@ func handle_dialogue_choice(index: int) -> void:
 			update_quest_journal()
 			trigger_dialogue("kikimora_peace", "Кикимора: Твоё почтение спасло тебе жизнь. Забирай Кристалл Яви.", "[1] Взять кристалл")
 			for e in enemy_list: if is_instance_valid(e): e.set_meta("status", "friendly")
+			spawn_crystal_reward()
 			update_world_label_ui() # <--- ДОБАВЬ ЭТО СЮДА
 		elif index == 2:
 			change_path("Путь Стали и Магии")
@@ -415,12 +441,17 @@ func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 	area.position = pos
 	
 	var spr := Sprite2D.new()
-	spr.texture = load_texture_safe("res://assets/stone.png", Vector2(50, 60), Color(0.4, 0.4, 0.4))
+	# ЗАМЕНИ ЭТУ СТРОКУ:
+	# spr.texture = load_texture_safe("res://assets/stone.png", Vector2(50, 60), Color(0.4, 0.4, 0.4))
+	
+	# НА ЭТУ (укажи путь к твоей картинке камня):
+	spr.texture = load("res://assets/tutorial_stone.png") # Путь к твоей текстуре
+	spr.scale = Vector2(1.5, 1.5) # Настрой размер, если текстура слишком большая
 	area.add_child(spr)
 	
 	var shape := CollisionShape2D.new()
 	shape.shape = CircleShape2D.new()
-	shape.shape.radius = 70.0
+	shape.shape.radius = 80.0
 	area.add_child(shape)
 	
 	area.body_entered.connect(func(body):
@@ -512,17 +543,23 @@ func spawn_portal(pos: Vector2, target: String) -> void:
 	portal.position = pos
 	
 	var spr := Sprite2D.new()
-	spr.texture = load_texture_safe("res://assets/portal.png", Vector2(60, 140), Color.PURPLE)
-	spr.scale = Vector2(1.3, 1.3)
+	spr.texture = load("res://assets/portal.png")
+	spr.modulate.a = 0
 	portal.add_child(spr)
+	
+	# ОБЯЗАТЕЛЬНО:
+	portal.set_meta("is_open", false)
+	portal.set_meta("sprite", spr) # Передаем ссылку на спрайт
 	
 	var shape := CollisionShape2D.new()
 	shape.shape = RectangleShape2D.new()
 	shape.shape.size = Vector2(90, 180)
+	
+	portal.monitoring = false # Он изначально выключен
 	portal.add_child(shape)
 	
-	# Подключаем функцию обработки входа
-	portal.body_entered.connect(_on_portal_body_entered.bind(portal, target))
+	# И самое важное — сигнал должен быть подключен!
+	portal.body_entered.connect(func(body): _on_portal_body_entered(body, portal, target))
 	
 	add_child(portal)
 	level_objects.append(portal)
@@ -530,17 +567,16 @@ func spawn_portal(pos: Vector2, target: String) -> void:
 func _on_portal_body_entered(body: Node2D, portal: Area2D, target: String) -> void:
 	if body != player: return
 	
-	# Блокируем портал, чтобы избежать двойного вызова
-	portal.set_deferred("monitoring", false)
-	
 	# --- Логика Обучения ---
 	if current_location_name == "Окраина Чернолесья":
+		# ПРОВЕРЯЕМ УСЛОВИЯ:
 		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
-			# Вызываем глобальный переход через TransitionManager
+			# Если все выполнено - переходим
 			TransitionManager.fade_to_scene(target)
 		else:
-			# Если рано, возвращаем мониторинг, чтобы игрок мог попробовать снова
-			portal.set_deferred("monitoring", true)
+			# Если условия НЕ выполнены, просто выводим текст.
+			# НЕ НУЖНО менять мониторинг, он и так активен, 
+			# чтобы игрок мог зайти снова и увидеть текст.
 			world_label.text = "АКТИВИРУЙТЕ ВСЕ ТРИ КАМНЯ!"
 		return
 
@@ -565,6 +601,21 @@ func switch_world(to_nav: bool) -> void:
 func update_world_label_ui() -> void: world_label.text = "МЕСТО: %s\nПУТЬ: %s" % [current_location_name.to_upper(), chosen_path_name.to_upper()]
 
 func update_quest_journal() -> void:
+	# 1. ЛОГИКА ОТКРЫТИЯ ПОРТАЛОВ
+	for obj in level_objects:
+		if obj is Area2D and obj.has_meta("is_open") and not obj.get_meta("is_open"):
+			
+			# Условие для Окраины Чернолесья
+			if current_location_name == "Окраина Чернолесья":
+				if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
+					open_portal(obj)
+			
+			# Условие для Древнего Капища (Кристалл)
+			elif current_location_name == "Древнее Капище":
+				if quest_objectives["find_crystal"]:
+					open_portal(obj)
+
+	# 2. ОБНОВЛЕНИЕ ТЕКСТА КВЕСТА
 	if not is_instance_valid(quest_text): return
 	
 	quest_text.bbcode_enabled = true
@@ -579,11 +630,9 @@ func update_quest_journal() -> void:
 	elif current_location_name == "Древнее Капище":
 		text_output = "[color=#e0a651]--- ГЛАВА I: КАПИЩЕ ---[/color]\n\n"
 		
-		# Если выбран мирный путь, ставим галочку автоматически
+		# Логика галочек для квеста
 		var is_boss_done = quest_objectives["defeat_kikimora"] or (current_combat_mode == CombatMode.PEACE)
-		var boss_icon = "✔" if is_boss_done else "•"
-		
-		text_output += "%s [color=#888888]Победа над Кикиморой[/color]\n" % boss_icon
+		text_output += "%s [color=#888888]Победа над Кикиморой[/color]\n" % ("✔" if is_boss_done else "•")
 		text_output += "%s Найти Кристалл Яви" % ("✔" if quest_objectives["find_crystal"] else "•")
 	
 	quest_text.text = text_output
@@ -670,7 +719,7 @@ func build_advanced_hud() -> void:
 	add_child(canvas_layer)
 	
 	# Увеличил высоту до 260, чтобы всё гарантированно поместилось
-	var status_panel := Panel.new()
+	status_panel = Panel.new()
 	status_panel.position = Vector2(40, 40)
 	status_panel.size = Vector2(490, 200) 
 	canvas_layer.add_child(status_panel)
@@ -1027,11 +1076,7 @@ func trigger_dialogue(id: String, main_text: String, choices: String) -> void:
 	dialogue_panel.visible = true
 
 # Вспомогательные заглушки-функции для визуальных эффектов боя
-func update_hp_display() -> void:
-	if is_instance_valid(hp_bar):
-		hp_bar.value = Global.current_hp
-	if is_instance_valid(mp_bar):
-		mp_bar.value = Global.current_mp
+
 func create_melee_flash(_pos: Vector2) -> void: pass
 func spawn_xp_effect(_pos: Vector2) -> void: pass
 
@@ -1076,6 +1121,7 @@ func _input(event: InputEvent) -> void:
 		
 			
 func apply_class_stats() -> void:
+	# 1. Задаем характеристики
 	if Global.player_class == "Воин":
 		Global.max_hp = 150
 		Global.max_mp = 50
@@ -1089,10 +1135,13 @@ func apply_class_stats() -> void:
 		Global.max_mp = 100
 		Global.max_stamina = 80
 	else:
-		# Стандартные значения, если класс не выбран
 		Global.max_hp = 100
 		Global.max_mp = 100
 		Global.max_stamina = 90
+	
+	Global.current_hp = Global.max_hp # Важно: сбрасываем HP до максимума класса
+	update_all_ui() # Обновляем бар под новый максимум
+
 func update_location_data(new_location: String) -> void:
 	current_location_name = new_location
 	print("Локация обновлена на: ", new_location)
@@ -1110,8 +1159,7 @@ func update_location_data(new_location: String) -> void:
 		background.texture = load_texture_safe("res://assets/bg_shrine.png", Vector2(1920, 1080), Color(0.15, 0.1, 0.15))
 		# Спавним содержимое Капища
 		spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
-		spawn_item(Vector2(1750, 750), "crystal")
-		spawn_portal(Vector2(3000, 700), "ПОБЕДА")
+		spawn_portal(Vector2(2700, 700), "ПОБЕДА")
 		trigger_dialogue("kikimora_start", "Кикимора: Кто посмел осквернить Древнее Капище?", "[1] Мир | [2] Бой")
 	
 	elif new_location == "Окраина Чернолесья":
@@ -1134,6 +1182,7 @@ func kill_enemy(enemy: CharacterBody2D) -> void:
 	if enemy.get_meta("id_tag") == "boss":
 		current_combat_mode = CombatMode.PEACE # <--- Снимаем блокировку с кристалла
 		boss_ui_layer.visible = false
+		spawn_crystal_reward()
 		world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
 		update_world_label_ui() # Обновляем заголовок, чтобы он не застрял на тексте победы
 		
@@ -1178,7 +1227,7 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 	area.body_entered.connect(func(body):
 		if body == player and not is_rolling:
 			Global.current_hp -= 15.0
-			update_hp_display()
+			update_all_ui()
 			player_anim.modulate = Color(1.0, 0.3, 0.3)
 			create_tween().tween_property(player_anim, "modulate", Color(1,1,1), 0.2)
 			proj.queue_free()
@@ -1187,18 +1236,17 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 	active_projectiles.append(proj)
 	
 func update_all_ui() -> void:
-	# Обновляем бары
 	if is_instance_valid(hp_bar):
-		hp_bar.max_value = Global.max_hp
-		hp_bar.value = Global.current_hp
+		hp_bar.max_value = float(Global.max_hp) # ОБНОВЛЯЕМ МАКСИМУМ
+		hp_bar.value = float(Global.current_hp)
 		
 	if is_instance_valid(mp_bar):
-		mp_bar.max_value = Global.max_mp
-		mp_bar.value = Global.current_mp
+		mp_bar.max_value = float(Global.max_mp)
+		mp_bar.value = float(Global.current_mp)
 		
 	if is_instance_valid(stamina_bar):
-		stamina_bar.max_value = Global.max_stamina
-		stamina_bar.value = Global.current_stamina
+		stamina_bar.max_value = float(Global.max_stamina)
+		stamina_bar.value = float(Global.current_stamina)
 		
 	# Обновляем уровень и XP
 	if is_instance_valid(xp_label):
@@ -1210,45 +1258,39 @@ func update_all_ui() -> void:
 		]
 		
 func _on_projectile_hit(enemy: Node2D) -> void:
-	# 1. Защита от двойного попадания
 	if not is_instance_valid(enemy) or enemy.get_meta("hp") <= 0:
 		return
 		
 	if enemy.get_meta("status") == "aggressive":
-		var damage = 35.0 
-		var enemy_hp = enemy.get_meta("hp") - damage
+		var damage = 35.0
+		var enemy_hp = max(0.0, enemy.get_meta("hp") - damage)
 		enemy.set_meta("hp", enemy_hp)
 		
-		# 2. Визуальный эффект (мигание красным с исправленным Tween)
 		var espr = enemy.get_node_or_null("AnimatedSprite2D")
 		if espr:
-			# Убиваем старый твин, если он есть, чтобы сбросить цвет
-			var old_tween = enemy.get_meta("hit_tween")
-			if old_tween and old_tween is Tween and old_tween.is_valid():
-				old_tween.kill()
+			# БЕЗОПАСНАЯ ПРОВЕРКА ЧЕРЕЗ has_meta
+			if enemy.has_meta("hit_tween"):
+				var old_tween = enemy.get_meta("hit_tween")
+				if old_tween and old_tween is Tween and old_tween.is_valid():
+					old_tween.kill()
 			
-			# Устанавливаем красный цвет
 			espr.modulate = Color(1.0, 0.3, 0.3)
-			
-			# Создаем новый твин для плавного возврата цвета
 			var new_tween = create_tween()
 			new_tween.tween_property(espr, "modulate", Color(1, 1, 1), 0.3)
 			
-			# Сохраняем ссылку на твин, чтобы потом его можно было убить при следующем ударе
 			enemy.set_meta("hit_tween", new_tween)
 		
-		print("Попадание по врагу! HP: ", enemy_hp)
-		
-		# 3. Обновление UI босса
+		# Обновление босса
 		if enemy.get_meta("id_tag") == "boss":
 			boss_hp_bar.value = enemy_hp
 			
-		# 4. Проверка смерти
 		if enemy_hp <= 0:
-			# Если враг умер, желательно "убить" и твин, чтобы он не пытался красить уже удаленный объект
-			var final_tween = enemy.get_meta("hit_tween")
-			if final_tween and final_tween is Tween and final_tween.is_valid():
-				final_tween.kill()
+			# Снова безопасная очистка
+			if enemy.has_meta("hit_tween"):
+				var final_tween = enemy.get_meta("hit_tween")
+				if final_tween and final_tween is Tween and final_tween.is_valid():
+					final_tween.kill()
+			
 			kill_enemy(enemy)
 
 func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "player") -> void:
@@ -1290,3 +1332,56 @@ func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "play
 	
 	# 7. Список активных снарядов
 	active_projectiles.append(proj)
+	
+func open_portal(portal: Area2D) -> void:
+	if portal.get_meta("is_open"): return
+	
+	portal.set_meta("is_open", true)
+	portal.monitoring = true # ВКЛЮЧАЕМ КОЛЛИЗИЮ!
+	
+	var spr = portal.get_meta("sprite")
+	
+	# Красивая анимация появления
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(spr, "modulate:a", 1.0, 1.0) # Проявляется за 1 секунду
+	tween.tween_property(spr, "scale", Vector2(1.3, 1.3), 1.0).from(Vector2(0.5, 0.5)) # Вырастает
+	
+func check_and_open_portal() -> void:
+	# --- Логика для Окраины Чернолесья ---
+	if current_location_name == "Окраина Чернолесья":
+		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
+			for obj in level_objects:
+				# Если объект - портал и он еще закрыт
+				if obj is Area2D and obj.has_meta("is_open") and obj.get_meta("is_open") == false:
+					open_portal(obj)
+		return # Выходим, чтобы не проверять условия другой локации
+
+	# --- Логика для Древнего Капища ---
+	if current_location_name == "Древнее Капище":
+		# Условие открытия: Босс побежден ИЛИ выбран мирный путь
+		var is_boss_defeated = boss_hp_bar.value <= 0 and enemy_list.is_empty() # Или используй свой флаг
+		var is_conditions_met = is_boss_defeated or (current_combat_mode == CombatMode.PEACE)
+		
+		if is_conditions_met:
+			for obj in level_objects:
+				# Проверяем, что это портал и он ведет на ПОБЕДУ
+				if obj is Area2D and obj.has_meta("target") and obj.get_meta("target") == "ПОБЕДА":
+					# И он еще закрыт
+					if obj.has_meta("is_open") and obj.get_meta("is_open") == false:
+						open_portal(obj)
+
+func spawn_crystal_reward() -> void:
+	# 1. Сначала найдем портал в списке level_objects
+	var portal_pos = Vector2(2500, 700) # Дефолтная позиция, если вдруг портал не найдем
+	for obj in level_objects:
+		if obj is Area2D and obj.has_meta("is_open") != null: # Ищем наш портал
+			portal_pos = obj.position
+			break
+	
+	var random_x = randf_range(-300, -50) # По горизонтали (влево/вправо)
+	var random_y = randf_range(100, 200)  # Чуть ниже портала (по вертикали)
+	var spawn_pos = portal_pos + Vector2(random_x, random_y)
+	
+	# 3. Спавним кристалл
+	spawn_item(spawn_pos, "crystal")

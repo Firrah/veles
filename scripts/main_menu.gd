@@ -5,9 +5,17 @@ var main_menu_canvas: CanvasLayer
 const FONT_PATH = "res://assets/fonts/main_font.otf"
 const WORLD_SCENE_PATH = "res://scenes/GameWorld.tscn"
 
+var btn_start: Button
+
 func _ready() -> void:
-	get_tree().paused = false
 	build_main_menu_ui()
+	if btn_start:
+		btn_start.pressed.connect(_on_start_pressed)
+		
+	get_tree().paused = false
+	
+func _on_start_pressed() -> void:
+	Global.change_scene("res://scenes/CharacterSelection.tscn")
 
 func apply_retro_style(panel: Panel, label: Label = null, padding: float = 20.0) -> void:
 	var style := StyleBoxFlat.new()
@@ -164,10 +172,11 @@ func build_main_menu_ui() -> void:
 		panel.add_child(btn)
 	
 	# РАЗМЕЩЕНИЕ КНОПОК УПРАВЛЕНИЯ
-	var btn_start = Button.new()
+	btn_start = Button.new()
 	setup_menu_btn.call(btn_start, "НАЧАТЬ СКАЗАНИЕ", Vector2(150, 385))
 	
-	# Добавляем отступ для того, что находится ВНУТРИ функции
+	# Используем lambda-функцию для перехода. 
+	# Это самый современный и чистый способ в Godot 4.x
 	btn_start.pressed.connect(func():
 		Global.change_scene("res://scenes/CharacterSelection.tscn")
 	)

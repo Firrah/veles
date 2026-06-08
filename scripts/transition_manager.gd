@@ -25,3 +25,12 @@ func fade_to_scene(target: String) -> void:
 	await get_tree().create_timer(0.2).timeout
 	var tween_in = create_tween()
 	tween_in.tween_property(fade, "color:a", 0.0, 0.5)
+# Добавь это в transition_manager.gd
+
+func simple_fade() -> void:
+	var tween = create_tween()
+	tween.tween_property(fade, "color:a", 1.0, 0.5)
+	await tween.finished
+	await get_tree().create_timer(0.2).timeout
+	var tween_in = create_tween()
+	tween_in.tween_property(fade, "color:a", 0.0, 0.5)

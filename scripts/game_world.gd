@@ -67,7 +67,11 @@ var level_objects = []
 var attack_cooldown: float = 0.0 # Таймер задержки выстрела
 var attack_delay: float = 0.5    # Задержка в 0.5 секунды между выстрелами
 
+var is_first_run: bool = true # Добавь в переменные класса
+
 func _ready() -> void:
+	if has_node("/root/TransitionManager"):
+		TransitionManager.fade.color.a = 0.0
 	Global.current_mp = 100.0
 	Global.reset_game_data()
 	apply_class_stats()
@@ -90,7 +94,7 @@ func _ready() -> void:
 	build_pause_menu_ui()
 	
 	start_tutorial_quest()
-	load_location("Окраина Чернолесья")
+	load_location("Окраина Чернолесья", false)
 
 func start_tutorial_quest() -> void:
 	if quest_text:
@@ -179,31 +183,54 @@ func build_player() -> void:
 	# 6. Добавляем игрока на сцену
 	add_child(player)
 
-func load_location(location_name: String) -> void:
+func load_location(location_name: String, show_animation: bool = true) -> void:
+	for proj in active_projectiles:
+		if is_instance_valid(proj):
+			proj.queue_free()
+		active_projectiles.clear()
+	# Теперь он не будет пытаться анимировать, если ты передал false
+	if show_animation and has_node("/root/TransitionManager"):
+		var tween = create_tween()
+		tween.tween_property(TransitionManager.fade, "color:a", 1.0, 0.5)
+		await tween.finished
+	
+	# 2. Очистка
+	for obj in level_objects: 
+		if is_instance_valid(obj): obj.queue_free()
+	level_objects.clear()
+	enemy_list.clear()
+	active_projectiles.clear()
+	
+	# 3. Смена данных
 	current_location_name = location_name
-	current_combat_mode = CombatMode.COMBAT; chosen_path_name = "Выбор не сделан"
-	is_dialogue_active = false; current_dialogue_id = ""; dialogue_panel.visible = false
-	boss_ui_layer.visible = false
-	
-	for obj in level_objects: if is_instance_valid(obj): obj.queue_free()
-	level_objects.clear(); enemy_list.clear(); active_projectiles.clear()
 	player.position = Vector2(250, 500)
+	is_dialogue_active = false
+	if is_instance_valid(dialogue_panel): dialogue_panel.visible = false
+	if is_instance_valid(boss_ui_layer): boss_ui_layer.visible = false
 	
+	# 4. Логика расстановки (сохранена твоя)
 	if location_name == "Окраина Чернолесья":
-		tutorial_steps_done = {"move": false, "roll": false, "nav": false}
 		background.texture = load_texture_safe("res://assets/bg_tutorial.png", Vector2(1920, 1080), Color(0.12, 0.14, 0.12))
-		spawn_tutorial_trigger(Vector2(700, 600), "move", "Камень Движения: Векторы WASD направляют твой шаг.")
-		spawn_tutorial_trigger(Vector2(1400, 700), "roll", "Камень Уклонения: Нажатие SHIFT дарует перекат.")
-		spawn_tutorial_trigger(Vector2(2100, 800), "nav", "Камень Нави: Клавиша R открывает Изнанку Мира.")
+		spawn_tutorial_trigger(Vector2(700, 600), "move", "Камень Движения")
+		spawn_tutorial_trigger(Vector2(1400, 700), "roll", "Камень Уклонения")
+		spawn_tutorial_trigger(Vector2(2100, 800), "nav", "Камень Нави")
 		spawn_portal(Vector2(2800, 750), "Древнее Капище")
-		
 	elif location_name == "Древнее Капище":
 		background.texture = load_texture_safe("res://assets/bg_shrine.png", Vector2(1920, 1080), Color(0.15, 0.1, 0.15))
-		spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
-		
-		trigger_dialogue("kikimora_start", "Кикимора Болотная: Кто посмел осквернить Древнее Капище?\nУбирайся, или твои кости сгниют в этой топи!", "[1] Договориться мирно (Дипломатия) | [2] Напасть (Бой)")
-		
-	update_world_label_ui(); update_quest_journal(); switch_world(false)
+		if current_combat_mode == CombatMode.COMBAT:
+			spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
+			scatter_herbs(3)
+			trigger_dialogue("kikimora_start", "Кикимора: Кто посмел осквернить Капище?", "[1] Договориться | [2] Напасть")
+		else:
+			world_label.text = "Капище очищено от скверны."
+			
+	update_world_label_ui()
+	update_quest_journal()
+	
+	# 5. Возврат экрана
+	if show_animation and has_node("/root/TransitionManager"):
+		var tween_in = create_tween()
+		tween_in.tween_property(TransitionManager.fade, "color:a", 0.0, 0.5)
 
 func _process(delta: float) -> void:
 	# 1. Базовые проверки
@@ -333,29 +360,48 @@ func _trigger_hit_effect() -> void:
 		player_anim.set_meta("hit_tween", t)
 
 func handle_dialogue_choice(index: int) -> void:
-	is_dialogue_active = false; dialogue_panel.visible = false
-	if current_dialogue_id.begins_with("tutorial_"): return
+	# Сохраняем ID текущего диалога, чтобы знать, что обрабатывать
+	var last_id = current_dialogue_id
+	
+	is_dialogue_active = false
+	dialogue_panel.visible = false
+	
+	if last_id.begins_with("tutorial_"): return
 		
-	if current_dialogue_id == "kikimora_start":
-		if index == 1:
-			change_path("Путь Стали и Магии")
+	if last_id == "kikimora_start":
+		if index == 1: # Мирный путь
 			current_combat_mode = CombatMode.PEACE
-			update_quest_journal()
-			trigger_dialogue("kikimora_peace", "Кикимора: Твоё почтение спасло тебе жизнь. Забирай Кристалл Яви.", "[1] Взять кристалл")
-			for e in enemy_list: if is_instance_valid(e): e.set_meta("status", "friendly")
-			spawn_crystal_reward()
-			update_world_label_ui() # <--- ДОБАВЬ ЭТО СЮДА
-		elif index == 2:
 			change_path("Путь Стали и Магии")
+			
+			# Переводим врагов в статус дружелюбных
+			for e in enemy_list: 
+				if is_instance_valid(e): e.set_meta("status", "friendly")
+			
+			# Запускаем "второй акт" диалога
+			trigger_dialogue("kikimora_peace", "Кикимора: Твоё почтение спасло жизнь. Забирай Кристалл.", "[1] Забрать кристалл и уйти")
+			
+		elif index == 2: # Боевой путь
 			current_combat_mode = CombatMode.COMBAT
-			trigger_dialogue("kikimora_war", "Кикимора: Я разорву тебя на куски! Защищайся!", "[1] К бою!")
-			update_world_label_ui() # <--- И СЮДА
+			change_path("Путь Стали и Магии")
+			
+			# Активируем босса
 			for e in enemy_list:
 				if is_instance_valid(e):
 					e.set_meta("status", "aggressive")
 					if e.get_meta("id_tag") == "boss":
 						boss_ui_layer.visible = true
+						
+	elif last_id == "kikimora_peace":
+		if index == 1:
+			inventory["crystal"] += 1
+			quest_objectives["find_crystal"] = true
+			quest_objectives["defeat_kikimora"] = true
+			update_inventory_ui()
+			world_label.text = "Кристалл в сумке."
+			
+	# Общие обновления
 	update_quest_journal()
+	update_world_label_ui()
 
 func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 	var area := Area2D.new()
@@ -436,79 +482,81 @@ func spawn_enemy(pos: Vector2, path: String, fallback_color: Color, id_tag: Stri
 		boss_hp_bar.show()
 
 func spawn_item(pos: Vector2, type: String) -> void:
-	var item := Area2D.new(); item.position = pos; item.set_meta("type", type)
+	var item := Area2D.new()
+	item.position = pos
+	item.set_meta("type", type)
+	
 	var spr := Sprite2D.new()
 	spr.texture = load_texture_safe("res://assets/crystal.png", Vector2(32, 32), Color.CYAN)
 	item.add_child(spr)
-	var shape := CollisionShape2D.new(); shape.shape = CircleShape2D.new(); shape.shape.radius = 50.0; item.add_child(shape)
 	
+	var shape := CollisionShape2D.new()
+	shape.shape = CircleShape2D.new()
+	shape.shape.radius = 50.0
+	item.add_child(shape)
+	
+	# Подключаем логику подбора
 	item.body_entered.connect(func(body):
 		if body == player:
-			# --- ПРОВЕРКА СОСТОЯНИЯ БОЯ ---
-			if current_combat_mode == CombatMode.COMBAT:
-				# Если бой идет, кристалл не берется
-				world_label.text = "ВРАГ НЕ ПОБЕЖДЁН!"
-				return
-			
-			# Если мы в режиме PEACE, забираем предмет
-			inventory["crystal"] += 1; add_xp(60)
-			quest_objectives["find_crystal"] = true # Ставим галочку
-			level_objects.erase(item); item.queue_free()
-			update_inventory_ui(); update_quest_journal()
-			world_label.text = "Ты овладел Кристаллом Яви."
+			if type == "crystal":
+				inventory["crystal"] += 1
+				update_inventory_ui()
+				item.queue_free()
+	
+	# Теперь, когда кристалл в инвентаре, вызываем проверку появления портала
+				check_and_open_portal()
 	)
-	add_child(item); level_objects.append(item)
+	
+	# ЭТИ СТРОКИ ДОЛЖНЫ БЫТЬ ВНЕ АНОНИМНОЙ ФУНКЦИИ (без отступа)
+	add_child(item)
+	level_objects.append(item)
 
-func spawn_portal(pos: Vector2, target: String) -> void:
+func spawn_portal(pos: Vector2, target: String) -> Area2D:
 	var portal := Area2D.new()
 	portal.position = pos
 	
+	# Загружаем текстуру
 	var spr := Sprite2D.new()
 	spr.texture = load("res://assets/portal.png")
-	spr.modulate.a = 0
+	
+	# --- ВАЖНО: Делаем его полностью прозрачным при создании ---
+	spr.modulate.a = 0.0 
+	# -----------------------------------------------------------
+	
 	portal.add_child(spr)
 	
-	# ОБЯЗАТЕЛЬНО:
 	portal.set_meta("is_open", false)
-	portal.set_meta("sprite", spr) # Передаем ссылку на спрайт
+	portal.set_meta("type", "portal")
 	
 	var shape := CollisionShape2D.new()
 	shape.shape = RectangleShape2D.new()
 	shape.shape.size = Vector2(90, 180)
-	
-	portal.monitoring = false # Он изначально выключен
 	portal.add_child(shape)
 	
-	# И самое важное — сигнал должен быть подключен!
 	portal.body_entered.connect(func(body): _on_portal_body_entered(body, portal, target))
 	
+	# Добавляем на сцену и в список объектов
 	add_child(portal)
 	level_objects.append(portal)
+	
+	return portal
 
 func _on_portal_body_entered(body: Node2D, portal: Area2D, target: String) -> void:
 	if body != player: return
 	
-	# --- Логика Обучения ---
-	if current_location_name == "Окраина Чернолесья":
-		# ПРОВЕРЯЕМ УСЛОВИЯ:
-		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
-			# Если все выполнено - переходим
-			TransitionManager.fade_to_scene(target)
-		else:
-			# Если условия НЕ выполнены, просто выводим текст.
-			# НЕ НУЖНО менять мониторинг, он и так активен, 
-			# чтобы игрок мог зайти снова и увидеть текст.
-			world_label.text = "АКТИВИРУЙТЕ ВСЕ ТРИ КАМНЯ!"
+	if portal.has_meta("is_open") and portal.get_meta("is_open") == false:
 		return
-
-	# --- Логика Победы ---
+		
 	if target == "ПОБЕДА":
-		if inventory["crystal"] >= 1:
-			Global.final_score = (inventory["crystal"] * 300) + (Global.player_level * 500)
+		if inventory.get("crystal", 0) >= 1:
+			# Переход на финал
 			TransitionManager.fade_to_scene("res://scenes/Victory.tscn")
 		else:
-			portal.set_deferred("monitoring", true)
-			world_label.text = "ПОРТАЛ ЗАКРЫТ БЕЗ КРИСТАЛЛА!"
+			world_label.text = "Кикимора не пустит!"
+		return
+
+	# Для обычных локаций используем load_location
+	load_location(target)
 
 func change_path(new_name: String) -> void:
 	chosen_path_name = new_name
@@ -562,17 +610,30 @@ func update_world_label_ui() -> void: world_label.text = "МЕСТО: %s\nПУТ
 func update_quest_journal() -> void:
 	# 1. ЛОГИКА ОТКРЫТИЯ ПОРТАЛОВ
 	for obj in level_objects:
-		if obj is Area2D and obj.has_meta("is_open") and not obj.get_meta("is_open"):
+		if not is_instance_valid(obj): continue
+		
+		if obj is Area2D and obj.has_meta("type") and obj.get_meta("type") == "portal":
+			# Если уже открыт — выходим из итерации
+			if obj.has_meta("is_open") and obj.get_meta("is_open") == true:
+				continue
+
+			var should_open = false
 			
-			# Условие для Окраины Чернолесья
 			if current_location_name == "Окраина Чернолесья":
 				if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
-					open_portal(obj)
+					remove_tutorial_button()
+					should_open = true
 			
-			# Условие для Древнего Капища (Кристалл)
 			elif current_location_name == "Древнее Капище":
-				if quest_objectives["find_crystal"]:
-					open_portal(obj)
+				# ВАЖНО: Проверим, что реально происходит с квестом
+				var has_crystal = quest_objectives.get("find_crystal", false)
+				print("DEBUG: В Капище, кристалл найден: ", has_crystal)
+				if has_crystal:
+					should_open = true
+			
+			if should_open:
+				print("DEBUG: Открываю портал!")
+				open_portal(obj)
 
 	# 2. ОБНОВЛЕНИЕ ТЕКСТА КВЕСТА
 	if not is_instance_valid(quest_text): return
@@ -596,7 +657,12 @@ func update_quest_journal() -> void:
 	
 	quest_text.text = text_output
 
-func update_inventory_ui() -> void: if is_instance_valid(inv_slots_text): inv_slots_text.text = "[ Кристалл ]: %d шт." % inventory["crystal"]
+func update_inventory_ui() -> void: 
+	if is_instance_valid(inv_slots_text): 
+		inv_slots_text.text = "[ Кристалл ]: %d шт." % inventory["crystal"]
+	else:
+		print("DEBUG: inv_slots_text не найден!")
+		
 func add_xp(amount: int) -> void: Global.player_xp += amount; if Global.player_xp >= 100: Global.player_xp -= 100; Global.player_level += 1; xp_label.text = "Уровень: %d (%d / 100 XP)" % [Global.player_level, Global.player_xp]
 
 func create_stat_bar(parent: Node, pos: Vector2, color: Color, max_val: float) -> ProgressBar:
@@ -756,6 +822,16 @@ func build_advanced_hud() -> void:
 	xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(xp_label)
 	_apply_label_font(xp_label, 18)
+	
+	var skip_tutorial_btn = Button.new()
+	skip_tutorial_btn.name = "SkipTutorialButton"
+	skip_tutorial_btn.text = "ПРОПУСТИТЬ ОБУЧЕНИЕ"
+# Задаем размер
+	skip_tutorial_btn.size = Vector2(440, 50)
+# Ставим в координаты (например, центр экрана по X и чуть ниже верха)
+	skip_tutorial_btn.position = Vector2(740, 50)
+	skip_tutorial_btn.pressed.connect(_on_skip_tutorial_pressed)
+	$HUDLayer.add_child(skip_tutorial_btn)
 	
 	# 3. Диалоговая панель
 	dialogue_panel = Panel.new()
@@ -1120,58 +1196,28 @@ func apply_class_stats() -> void:
 	Global.current_hp = Global.max_hp # Важно: сбрасываем HP до максимума класса
 	update_all_ui() # Обновляем бар под новый максимум
 
-func update_location_data(new_location: String) -> void:
-	current_location_name = new_location
-	print("Локация обновлена на: ", new_location)
-	
-	# 1. Удаляем все объекты старой локации (врагов и порталы)
-	for obj in level_objects:
-		if is_instance_valid(obj):
-			obj.queue_free()
-	level_objects.clear()
-	enemy_list.clear()
-	active_projectiles.clear()
-	
-	# 2. Меняем фон
-	if new_location == "Древнее Капище":
-		background.texture = load_texture_safe("res://assets/bg_shrine.png", Vector2(1920, 1080), Color(0.15, 0.1, 0.15))
-		# Спавним содержимое Капища
-		spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
-		spawn_portal(Vector2(2700, 700), "ПОБЕДА")
-		trigger_dialogue("kikimora_start", "Кикимора: Кто посмел осквернить Древнее Капище?", "[1] Мир | [2] Бой")
-	
-	elif new_location == "Окраина Чернолесья":
-		background.texture = load_texture_safe("res://assets/bg_tutorial.png", Vector2(1920, 1080), Color(0.12, 0.14, 0.12))
-		# ... тут спавн триггеров обучения, если нужно
-		
-	# 3. Перемещаем игрока на стартовую позицию
-	player.position = Vector2(250, 500)
-	
-	# 4. Обновляем интерфейс
-	update_world_label_ui()
-	update_quest_journal()
 func kill_enemy(enemy: CharacterBody2D) -> void:
 	if not is_instance_valid(enemy): return
 	
-	# 1. Эффекты смерти
-	spawn_xp_effect(enemy.global_position) # Используем global_position для надежности
+	spawn_xp_effect(enemy.global_position)
 	
-	# 2. Логика победы над боссом
 	if enemy.get_meta("id_tag") == "boss":
-		current_combat_mode = CombatMode.PEACE
-		boss_ui_layer.visible = false
-		spawn_crystal_reward()
+		# Спавним предмет
+		spawn_item(enemy.global_position, "crystal")
+		world_label.text = "Кикимора повержена! Забери Кристалл!"
 		
-		# Обновление квеста и текста
-		quest_objectives["defeat_kikimora"] = true
-		world_label.text = "КИКИМОРА ПОВЕРЖЕНА!"
-		
-	# 3. Удаление врага
-	enemy_list.erase(enemy)
-	level_objects.erase(enemy)
+		# ПРЯЧЕМ БАР БОССА
+		if is_instance_valid(boss_ui_layer):
+			boss_ui_layer.visible = false
+	
+	# Очистка списков
+	enemy_list = enemy_list.filter(is_instance_valid)
+	level_objects = level_objects.filter(is_instance_valid)
+	
+	# Удаление врага
 	enemy.queue_free()
 	
-	# 4. Финальные обновления
+	# Обновление состояния
 	update_all_ui()
 	update_quest_journal()
 	update_world_label_ui()
@@ -1270,6 +1316,14 @@ func _on_projectile_hit(enemy: Node2D) -> void:
 				if final_tween and final_tween is Tween and final_tween.is_valid():
 					final_tween.kill()
 			
+			# --- ДОБАВЛЯЕМ ВЫПАДЕНИЕ ХИЛКИ ---
+			# Спавним хилку в месте смерти врага
+			# Если это босс, можно заспавнить даже несколько!
+			if enemy.get_meta("id_tag") == "boss":
+				spawn_herb(enemy.global_position + Vector2(150, 0))
+				spawn_herb(enemy.global_position + Vector2(-150, 0))
+			# ---------------------------------
+			
 			kill_enemy(enemy)
 
 func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "player") -> void:
@@ -1327,57 +1381,68 @@ func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "play
 	active_projectiles.append(proj)
 	
 func open_portal(portal: Area2D) -> void:
-	if portal.get_meta("is_open"): return
-	
+	# 1. Меняем статус
 	portal.set_meta("is_open", true)
-	portal.monitoring = true # ВКЛЮЧАЕМ КОЛЛИЗИЮ!
 	
-	var spr = portal.get_meta("sprite")
+	# 2. Включаем коллизию, чтобы игрок мог войти
+	portal.monitoring = true 
 	
-	# Красивая анимация появления
-	var tween = create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(spr, "modulate:a", 1.0, 1.0) # Проявляется за 1 секунду
-	tween.tween_property(spr, "scale", Vector2(1.3, 1.3), 1.0).from(Vector2(0.5, 0.5)) # Вырастает
+	# 3. Анимация появления
+	# Ищем Sprite2D, который мы добавили как child в spawn_portal
+	var spr: Sprite2D = null
+	for child in portal.get_children():
+		if child is Sprite2D:
+			spr = child
+			break
+			
+	if is_instance_valid(spr):
+		#print("DEBUG: Анимация портала запущена для ", spr)
+		spr.modulate.a = 0.0 # На всякий случай сбрасываем в 0 перед анимацией
+		var t = create_tween()
+		# Плавное проявление (альфа-канал от 0 до 1) за 1.5 секунды
+		t.tween_property(spr, "modulate:a", 1.0, 1.5)
+		# Эффект масштабирования для красоты:
+		t.parallel().tween_property(spr, "scale", Vector2(1.2, 1.2), 1.5)
+	else:
+		push_error("Анимация портала невозможна: Sprite2D не найден внутри " + str(portal.name))
 	
 func check_and_open_portal() -> void:
-	# --- Логика для Окраины Чернолесья ---
+	# 1. Логика для Окраины Чернолесья (обучение)
 	if current_location_name == "Окраина Чернолесья":
 		if tutorial_steps_done.move and tutorial_steps_done.roll and tutorial_steps_done.nav:
 			for obj in level_objects:
-				# Если объект - портал и он еще закрыт
-				if obj is Area2D and obj.has_meta("is_open") and obj.get_meta("is_open") == false:
-					open_portal(obj)
-		return # Выходим, чтобы не проверять условия другой локации
-
-	# --- Логика для Древнего Капища ---
-	if current_location_name == "Древнее Капище":
-		# Условие открытия: Босс побежден ИЛИ выбран мирный путь
-		var is_boss_defeated = boss_hp_bar.value <= 0 and enemy_list.is_empty() # Или используй свой флаг
-		var is_conditions_met = is_boss_defeated or (current_combat_mode == CombatMode.PEACE)
+				if obj is Area2D and obj.has_meta("type") and obj.get_meta("type") == "portal":
+					if not obj.get_meta("is_open"):
+						open_portal(obj) # Активируем существующий на уровне портал
+		return
 		
-		if is_conditions_met:
+	if current_location_name == "Древнее Капище":
+		# Проверяем, есть ли кристалл
+		if inventory.get("crystal", 0) > 0:
+			# Проверяем, не создан ли уже портал (чтобы не спавнить их пачками)
+			var portal_exists = false
 			for obj in level_objects:
-				# Проверяем, что это портал и он ведет на ПОБЕДУ
-				if obj is Area2D and obj.has_meta("target") and obj.get_meta("target") == "ПОБЕДА":
-					# И он еще закрыт
-					if obj.has_meta("is_open") and obj.get_meta("is_open") == false:
-						open_portal(obj)
+				if is_instance_valid(obj) and obj.has_meta("type") and obj.get_meta("type") == "portal":
+					portal_exists = true
+					break
+			
+			if not portal_exists:
+				print("Кристалл найден! Создаю портал.")
+				var p = spawn_portal(Vector2(2800, 750), "ПОБЕДА")
+				# Сразу делаем его активным
+				open_portal(p)
 
-func spawn_crystal_reward() -> void:
-	# 1. Сначала найдем портал в списке level_objects
-	var portal_pos = Vector2(2500, 700) # Дефолтная позиция, если вдруг портал не найдем
-	for obj in level_objects:
-		if obj is Area2D and obj.has_meta("is_open") != null: # Ищем наш портал
-			portal_pos = obj.position
-			break
+# Измени определение функции:
+func spawn_crystal_reward(pos: Vector2 = Vector2.ZERO) -> void:
+	var final_pos = pos
+	if final_pos == Vector2.ZERO:
+		for obj in level_objects:
+			if is_instance_valid(obj) and obj.has_meta("type") and obj.get_meta("type") == "portal":
+				final_pos = obj.global_position
+				break
 	
-	var random_x = randf_range(-300, -50) # По горизонтали (влево/вправо)
-	var random_y = randf_range(100, 200)  # Чуть ниже портала (по вертикали)
-	var spawn_pos = portal_pos + Vector2(random_x, random_y)
-	
-	# 3. Спавним кристалл
-	spawn_item(spawn_pos, "crystal")
+	# Теперь вызываем спавн один раз
+	spawn_item(final_pos, "crystal")
 	
 func _process_enemies(delta: float) -> void:
 	for enemy in enemy_list:
@@ -1460,3 +1525,77 @@ func play_hit_effect(pos: Vector2) -> void:
 	# Удаляем частицы автоматически после завершения анимации
 	await p.finished
 	p.queue_free()
+	
+func spawn_herb(pos: Vector2) -> void:
+	var herb := Area2D.new()
+	herb.position = pos
+	herb.set_meta("is_herb", true)
+	
+	var spr := Sprite2D.new()
+	# Убедись, что путь верный
+	if ResourceLoader.exists("res://assets/herb.png"):
+		spr.texture = load("res://assets/herb.png")
+	else:
+		# Временная заглушка, если картинка пока не подгрузилась
+		var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+		img.fill(Color.GREEN)
+		spr.texture = ImageTexture.create_from_image(img)
+		
+	spr.scale = Vector2(2, 2) # Немного увеличим для заметности
+	herb.add_child(spr)
+	
+	var shape := CollisionShape2D.new()
+	shape.shape = CircleShape2D.new()
+	shape.shape.radius = 30.0
+	herb.add_child(shape)
+	
+	herb.body_entered.connect(func(body):
+		if body == player:
+			Global.current_hp = min(Global.current_hp + 50.0, 100.0)
+			update_all_ui()
+			world_label.text = "Ты отведал целебных трав."
+			herb.queue_free()
+	)
+	
+	add_child(herb)
+	level_objects.append(herb)
+	
+func cleanup_level_objects() -> void:
+	# Удаляет из списка все ссылки, которые ведут в никуда
+	level_objects = level_objects.filter(is_instance_valid)
+	
+func scatter_herbs(count: int) -> void:
+	for i in range(count):
+		var rx = randf_range(100, map_width - 100)
+		var ry = randf_range(500, map_height - 200)
+		
+		# ПРОВЕРКА: если позиция слишком близко к центру арены (где босс),
+		# либо к координатам портала — не спавним там траву.
+		if Vector2(rx, ry).distance_to(Vector2(960, 540)) < 200:
+			continue # Пропускаем этот круг
+			
+		spawn_herb(Vector2(rx, ry))
+		
+func _on_skip_tutorial_pressed() -> void:
+	# 1. ЗАЩИТА: поглощаем событие, чтобы мир не "увидел" клик как атаку
+	get_viewport().set_input_as_handled()
+	
+	# 2. Очистка "зависших" снарядов перед переходом
+	for proj in active_projectiles:
+		if is_instance_valid(proj):
+			proj.queue_free()
+	active_projectiles.clear()
+	
+	# 3. Состояние обучения
+	tutorial_steps_done = {"move": true, "roll": true, "nav": true}
+	
+	# 4. Переход
+	load_location("Древнее Капище")
+	
+	# 5. Убираем кнопку
+	remove_tutorial_button()
+	
+func remove_tutorial_button() -> void:
+	var btn = get_node_or_null("HUDLayer/SkipTutorialButton")
+	if is_instance_valid(btn):
+		btn.queue_free()

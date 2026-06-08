@@ -69,6 +69,7 @@ func build_ui() -> void:
 	
 	# Логика возврата
 	btn_back.pressed.connect(func():
+		AudioManager.play_game_sfx("click")
 		Global.change_scene("res://scenes/MainMenu.tscn") # Укажи путь к своей сцене меню
 	)
 	panel.add_child(btn_back)
@@ -117,6 +118,7 @@ func create_class_button(parent: Control, title: String, desc: String, pos: Vect
 	btn.add_child(lbl_desc)
 	
 	btn.pressed.connect(func(): 
+		AudioManager.play_game_sfx("click")
 		Global.player_class = _class_id
 		Global.change_scene("res://scenes/GameWorld.tscn")
 	)

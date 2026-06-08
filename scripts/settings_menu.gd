@@ -84,7 +84,10 @@ func build_settings_ui() -> void:
 		btn.text = text; btn.position = pos; btn.size = Vector2(400, 65)
 		btn.add_theme_stylebox_override("normal", style_normal)
 		if font_res: btn.add_theme_font_override("font", font_res); btn.add_theme_font_size_override("font_size", 21)
-		btn.pressed.connect(cb)
+		btn.pressed.connect(func():
+			AudioManager.play_game_sfx("click") # Играем звук
+			cb.call()                          # Выполняем то, что пришло в cb
+			)
 		panel.add_child(btn)
 		
 	setup_btn.call("ПЕРЕКЛЮЧИТЬ ЭКРАН", Vector2(150, 500), func():

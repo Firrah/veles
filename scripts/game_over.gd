@@ -39,8 +39,10 @@ func _ready() -> void:
 	btn1.size = Vector2(400, 60)
 	btn1.position = Vector2(300, 300)
 	btn1.pressed.connect(func(): 
+		AudioManager.play_game_sfx("click")
 		Global.reset_game_data()
 		Global.change_scene("res://scenes/GameWorld.tscn")
+		AudioManager.play_music(load("res://assets/sounds/Under-Pine-Shadows.ogg"))
 	)
 	panel.add_child(btn1)
 	_apply_font(btn1, 24, Color.WHITE)
@@ -49,7 +51,11 @@ func _ready() -> void:
 	btn2.text = "ГЛАВНОЕ МЕНЮ"
 	btn2.size = Vector2(400, 60)
 	btn2.position = Vector2(300, 380)
-	btn2.pressed.connect(func(): Global.change_scene("res://scenes/MainMenu.tscn"))
+	btn2.pressed.connect(func():
+		AudioManager.play_game_sfx("click") # Сначала звук
+		Global.change_scene("res://scenes/MainMenu.tscn") # Потом действие
+		AudioManager.play_music(load("res://assets/sounds/Under-Pine-Shadows.ogg"))
+)
 	panel.add_child(btn2)
 	_apply_font(btn2, 24, Color.WHITE)
 

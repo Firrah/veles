@@ -5,6 +5,9 @@ const FONT_PATH = "res://assets/fonts/main_font.otf"
 var btn_start: Button
 
 func _ready() -> void:
+	var music_stream = load("res://assets/sounds/Under-Pine-Shadows.ogg") 
+	
+	AudioManager.play_music(music_stream)
 	build_main_menu_ui()
 	get_tree().paused = false
 
@@ -111,14 +114,20 @@ func build_main_menu_ui() -> void:
 	# КНОПКИ
 	btn_start = Button.new()
 	setup_menu_btn.call(btn_start, "НАЧАТЬ СКАЗАНИЕ", Vector2(150, 385))
-	btn_start.pressed.connect(func(): Global.change_scene("res://scenes/CharacterSelection.tscn"))
+	btn_start.pressed.connect(func(): 
+		AudioManager.play_game_sfx("click")
+		Global.change_scene("res://scenes/CharacterSelection.tscn"))
 	
 	# КНОПКА НАСТРОЕК (вставлена в твой поток)
 	var btn_settings = Button.new()
 	setup_menu_btn.call(btn_settings, "НАСТРОЙКИ", Vector2(150, 465))
-	btn_settings.pressed.connect(func(): Global.change_scene("res://scenes/SettingsMenu.tscn"))
+	btn_settings.pressed.connect(func(): 
+		AudioManager.play_game_sfx("click")
+		Global.change_scene("res://scenes/SettingsMenu.tscn"))
 	
 	var btn_exit = Button.new()
 	setup_menu_btn.call(btn_exit, "ВЫЙТИ В ПОСАД", Vector2(150, 545))
-	btn_exit.pressed.connect(func(): get_tree().quit())
+	btn_exit.pressed.connect(func(): 
+		AudioManager.play_game_sfx("click")
+		get_tree().quit())
 	

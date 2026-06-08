@@ -73,6 +73,7 @@ const PLAYER_GLOW := Color(1.35, 1.28, 1.42, 1.0)
 const ENEMY_GLOW := Color(1.22, 1.18, 1.28, 1.0)
 
 func _ready() -> void:
+	AudioManager.play_music(load("res://assets/sounds/Under-Pine-Shadows.ogg"))
 	check_and_open_portal()
 	# 1. Сначала создаем объекты, которые нужны для работы функций
 	canvas_modulate = CanvasModulate.new()
@@ -273,6 +274,7 @@ func load_location(location_name: String, show_animation: bool = true) -> void:
 			spawn_enemy(Vector2(1600, 700), "res://assets/kikimora.png", Color(0.2, 0.6, 0.2), "boss")
 			scatter_herbs(3)
 			trigger_dialogue("kikimora_start", "Кикимора: Кто посмел осквернить Капище?", "[1] Договориться | [2] Напасть")
+			AudioManager.play_game_sfx("text")
 		else:
 			world_label.text = "Капище очищено от скверны."
 			
@@ -295,6 +297,8 @@ func _process(delta: float) -> void:
 	if Global.current_hp <= 0:
 		set_process(false)
 		TransitionManager.fade_to_scene("res://scenes/GameOver.tscn")
+		AudioManager.stop_music_faded(1.5)
+		AudioManager.play_game_sfx("lose")
 		return
 	
 	# 2. Логика Нави/Яви
@@ -409,6 +413,7 @@ func _trigger_hit_effect() -> void:
 	if is_instance_valid(player_anim):
 		if player_anim.has_meta("hit_tween") and is_instance_valid(player_anim.get_meta("hit_tween")):
 			player_anim.get_meta("hit_tween").kill()
+		AudioManager.play_game_sfx("damage")
 		player_anim.modulate = Color(1.0, 0.3, 0.3)
 		var t = create_tween()
 		t.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
@@ -479,6 +484,7 @@ func spawn_tutorial_trigger(pos: Vector2, step_id: String, msg: String) -> void:
 		if body == player:
 			var formatted_msg = "ВЕЩИЙ КАМЕНЬ СТРУИТ НАКАЗ:\n\n" + msg + ""
 			trigger_dialogue("tutorial_" + step_id, formatted_msg, "[1] Осознать")
+			AudioManager.play_game_sfx("text")
 			
 			tutorial_steps_done[step_id] = true
 			quest_objectives[step_id] = true # Ставим галочку в новой системе
@@ -569,6 +575,7 @@ func spawn_item(pos: Vector2, type: String) -> void:
 	item.body_entered.connect(func(body):
 		if body == player:
 			if type == "crystal":
+				AudioManager.play_game_sfx("pickup")
 				inventory["crystal"] += 1
 				update_inventory_ui()
 				item.queue_free()
@@ -681,7 +688,10 @@ func _on_portal_body_entered(body: Node2D, portal: Area2D) -> void:
 		
 	if target == "ПОБЕДА":
 		if inventory.get("crystal", 0) >= 1:
+			AudioManager.play_game_sfx("portal")
 			TransitionManager.fade_to_scene("res://scenes/Victory.tscn")
+			AudioManager.stop_music_faded(1.5)
+			AudioManager.play_game_sfx("win")
 		else:
 			world_label.text = "Кикимора не пустит!"
 		return
@@ -1316,6 +1326,7 @@ func kill_enemy(enemy: CharacterBody2D) -> void:
 	if enemy.get_meta("id_tag") == "boss":
 		# Спавним предмет
 		spawn_item(enemy.global_position, "crystal")
+		AudioManager.play_game_sfx("boss_dead")
 		world_label.text = "Кикимора повержена! Забери Кристалл!"
 		
 		# ПРЯЧЕМ БАР БОССА
@@ -1363,6 +1374,7 @@ func spawn_boss_projectile(start_pos: Vector2, target_pos: Vector2) -> void:
 		if body == player and not is_rolling:
 			Global.current_hp -= 15.0
 			update_all_ui()
+			AudioManager.play_game_sfx("damage")
 			player_anim.modulate = Color(1.0, 0.3, 0.3)
 			create_tween().tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
 			proj.queue_free()
@@ -1398,6 +1410,7 @@ func _on_projectile_hit(enemy: Node2D) -> void:
 		
 	# 1. ДОБАВЛЯЕМ ВИЗУАЛЬНЫЙ ЭФФЕКТ ВЗРЫВА
 	play_hit_effect(enemy.global_position)
+	AudioManager.play_game_sfx("damage")
 		
 	if enemy.get_meta("status") == "aggressive":
 		var damage = 35.0
@@ -1454,6 +1467,7 @@ func spawn_projectile(start_pos: Vector2, dir: Vector2, owner_id: String = "play
 	
 	# 3. Добавляем в сцену
 	add_child(proj)
+	AudioManager.play_game_sfx("spell")
 	
 	# 4. Подключаем сигнал
 	proj.body_entered.connect(_on_projectile_hit)
@@ -1534,7 +1548,9 @@ func open_portal(portal: Area2D) -> void:
 	# 5. Подключение сигнала входа
 	if not portal.body_entered.is_connected(_on_portal_body_entered):
 		# См. Вариант 1 выше, если твоя функция требует target
-		portal.body_entered.connect(func(body): _on_portal_body_entered(body, portal))
+		portal.body_entered.connect(func(body): 
+			AudioManager.play_game_sfx("portal")
+			_on_portal_body_entered(body, portal))
 	
 func check_and_open_portal() -> void:
 	# Оставляем только самое важное, без лишнего спама
@@ -1629,6 +1645,7 @@ func _process_enemies(delta: float) -> void:
 				enemy.set_meta("melee_timer", 1.5)
 				update_all_ui()
 				# Эффект удара
+				AudioManager.play_game_sfx("damage")
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
 				tween.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
@@ -1648,6 +1665,7 @@ func _process_enemies(delta: float) -> void:
 			enemy.set_meta("attack_timer", 1.4)
 			update_all_ui()
 			if is_instance_valid(player_anim):
+				AudioManager.play_game_sfx("damage")
 				player_anim.modulate = Color(1.0, 0.3, 0.3)
 				var tween = create_tween()
 				tween.tween_property(player_anim, "modulate", PLAYER_GLOW, 0.2)
@@ -1700,6 +1718,7 @@ func spawn_herb(pos: Vector2) -> void:
 			Global.current_hp = min(Global.current_hp + 50.0, 100.0)
 			update_all_ui()
 			world_label.text = "Ты отведал целебных трав."
+			AudioManager.play_game_sfx("pickup")
 			herb.queue_free()
 	)
 	
@@ -1723,6 +1742,7 @@ func scatter_herbs(count: int) -> void:
 		spawn_herb(Vector2(rx, ry))
 		
 func _on_skip_tutorial_pressed() -> void:
+	AudioManager.play_game_sfx("click")
 	# 1. ЗАЩИТА: поглощаем событие, чтобы мир не "увидел" клик как атаку
 	get_viewport().set_input_as_handled()
 	

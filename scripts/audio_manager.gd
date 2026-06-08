@@ -1,6 +1,17 @@
 extends Node
 
 var sfx_players = []
+const SOUNDS = {
+	"pickup": "res://assets/sounds/pickup.wav",
+	"text": "res://assets/sounds/text.wav",
+	"portal": "res://assets/sounds/portal.wav",
+	"click": "res://assets/sounds/click.wav",
+	"win": "res://assets/sounds/win.wav",
+	"lose": "res://assets/sounds/lose.wav",
+	"boss_dead": "res://assets/sounds/boss_dead.wav",
+	"spell": "res://assets/sounds/spell.wav",
+	"damage": "res://assets/sounds/damage.wav"
+}
 const MAX_SFX_PLAYERS = 16 # С запасом для активных битв
 const SETTINGS_FILE = "user://settings.cfg"
 
@@ -25,11 +36,22 @@ func play_sfx(stream: AudioStream):
 			player.stream = stream
 			player.play()
 			return
+			
+func play_game_sfx(key: String):
+	if SOUNDS.has(key):
+		play_sfx(load(SOUNDS[key]))
 
 func play_music(stream: AudioStream):
-	if $MusicPlayer.stream == stream: return
-	$MusicPlayer.stream = stream
-	$MusicPlayer.play()
+	var music_player = $MusicPlayer
+	
+	# Если это тот же самый трек, просто продолжаем играть
+	if music_player.stream == stream and music_player.playing:
+		return
+		
+	# Если это новый трек или плеер стоит:
+	music_player.stop()       # Останавливаем старый
+	music_player.stream = stream # Меняем на новый
+	music_player.play()       # Запускаем
 
 func set_bus_volume(bus_name: String, value: float):
 	var idx = AudioServer.get_bus_index(bus_name)
@@ -52,3 +74,27 @@ func load_settings():
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("Master"), config.get_value("audio", "master", 0.0))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("Music"), config.get_value("audio", "music", 0.0))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("SFX"), config.get_value("audio", "sfx", 0.0))
+
+func fade_music_to(stream: AudioStream, duration: float = 1.0):
+	var music_player = $MusicPlayer
+	var tween = create_tween()
+	
+	# Плавное затухание текущей
+	tween.tween_property(music_player, "volume_db", -80.0, duration)
+	tween.tween_callback(func():
+		music_player.stream = stream
+		music_player.play()
+		# Плавное появление новой
+		create_tween().tween_property(music_player, "volume_db", 0.0, duration)
+	)
+	
+func stop_music_faded(duration: float = 1.0):
+	var music_player = $MusicPlayer
+	if not music_player.playing: return
+	
+	var tween = create_tween()
+	tween.tween_property(music_player, "volume_db", -80.0, duration)
+	tween.tween_callback(func():
+		music_player.stop()
+		music_player.volume_db = 0.0 # Сбрасываем громкость для следующего раза
+	)
